@@ -1,0 +1,30 @@
+{
+  "name": "@minerva/server",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "minerva": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "start": "node dist/cli.js serve"
+  },
+  "dependencies": {
+    "@minerva/schema": "*",
+    "chokidar": "^3.6.0",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1",
+    "open": "^10.1.0",
+    "playwright-core": "^1.48.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.5.0",
+    "@types/ws": "^8.5.12",
+    "typescript": "^5.6.0"
+  }
+}

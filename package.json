@@ -1,0 +1,17 @@
+{
+  "name": "minerva-monorepo",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Minerva — a Google Slides-like editor that both humans and Claude can edit.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev -w @minerva/server",
+    "minerva": "node packages/server/dist/cli.js"
+  },
+  "bin": {
+    "minerva": "packages/server/dist/cli.js"
+  }
+}
