@@ -2,7 +2,27 @@
 
 This is the canonical design doc for v0 of Minerva. Future versions will live in `design_docs/v1/`, `v2/`, etc. and reference back to this one.
 
+
 ---
+**v0.1** 
+
+## Human Feedback: 
+
+- Let's add left align center, justify to the text element. 
+- Let's make it so we can add text to any shape
+- Right now, when I type in the text, I cannot add trailing spaces. 
+- When I change the font in the dropdown the font doesn't seem to change instantly I need to click the text box again. 
+
+
+
+
+
+
+
+
+
+---
+**v0.0**
 
 ## Human feedback (verbatim)
 
@@ -245,3 +265,5 @@ M1 first — broken export is the most visible bug. Then M2 + M3 in parallel sin
 - **TipTap**: rich text editor framework used in step M4. https://tiptap.dev
 - **Konva**: 2D canvas library underpinning the renderer. https://konvajs.org
 - **Google Fonts WebFont Loader**: dynamic font loading. https://github.com/typekit/webfontloader
+
+

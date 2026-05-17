@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import multer from "multer";
 import { Deck, Comments } from "@minerva/schema";
-import { exportDeckPdf } from "./pdf.js";
+import { exportDeckPdf, renderSlidePng } from "./pdf.js";
 
 type ServerOptions = { root: string; port: number };
 
@@ -103,6 +103,29 @@ export async function startServer({ root, port }: ServerOptions) {
       res.send(pdf);
     } catch (err) {
       console.error("pdf export failed", err);
+      res.status(500).type("text/plain").send((err as Error).message);
+    }
+  });
+
+  // --- API: PNG render (Claude's visual feedback loop) ----------------------
+  app.get("/api/render/png", async (req, res) => {
+    try {
+      const raw = await readFile(deckPath, "utf8");
+      const deck = Deck.parse(JSON.parse(raw));
+      const slideId = typeof req.query.slide === "string" ? req.query.slide : deck.slides[0]?.id;
+      if (!slideId || !deck.slides.some((s) => s.id === slideId)) {
+        res.status(404).type("text/plain").send(`no slide with id "${slideId}"`);
+        return;
+      }
+      const png = await renderSlidePng({
+        baseUrl: `http://localhost:${port}`,
+        deckSize: deck.size,
+        slideId,
+      });
+      res.setHeader("Content-Type", "image/png");
+      res.send(png);
+    } catch (err) {
+      console.error("png render failed", err);
       res.status(500).type("text/plain").send((err as Error).message);
     }
   });

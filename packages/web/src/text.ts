@@ -1,4 +1,5 @@
 import type { TextNode } from "@minerva/schema";
+import { useStore } from "./store";
 
 export const GOOGLE_FONTS = [
   "Inter",
@@ -55,17 +56,41 @@ export function ensureFontLoaded(family: string): Promise<void> {
   return new Promise((resolve) => {
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    const url = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, "+")}:ital,wght@0,400;0,700;1,400;1,700&display=swap`;
+    // Request every 100-step weight in both normal and italic so any
+    // fontWeight the deck uses has an @font-face to bind to.
+    const url = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, "+")}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
     link.href = url;
     link.onload = async () => {
       try {
         await (document as any).fonts?.load?.(`16px "${family}"`);
       } catch { /* ignore */ }
+      useStore.getState().bumpFontRevision();
       resolve();
     };
     link.onerror = () => resolve();
     document.head.appendChild(link);
   });
+}
+
+const loadedWeights = new Set<string>();
+/**
+ * Force the browser to fetch a specific (family, weight, italic) font file.
+ * Listing the weight in the Google Fonts URL only adds an @font-face rule —
+ * the actual file is fetched lazily once something *uses* it. Konva draws to
+ * <canvas>, so the browser may rasterize before the file arrives unless we
+ * proactively call document.fonts.load() for the exact tuple.
+ */
+export async function ensureFontWeightLoaded(family: string, weight: number, italic = false): Promise<void> {
+  if (!family) return;
+  await ensureFontLoaded(family);
+  const key = `${family}/${weight}/${italic ? "i" : "n"}`;
+  if (loadedWeights.has(key)) return;
+  loadedWeights.add(key);
+  try {
+    const spec = `${italic ? "italic " : ""}${weight} 16px "${family}"`;
+    await (document as any).fonts?.load?.(spec);
+  } catch { /* ignore */ }
+  useStore.getState().bumpFontRevision();
 }
 
 /**
@@ -84,7 +109,7 @@ export function plainText(node: TextNode | undefined): string {
     if (n.type === "text" && typeof n.text === "string") parts.push(n.text);
     if (n.type === "paragraph") parts.push("\n");
   });
-  return parts.join("").replace(/^\n+/, "").trimEnd();
+  return parts.join("").replace(/^\n+/, "");
 }
 
 export function plainTextDoc(s: string): TextNode {
@@ -95,10 +120,49 @@ export function plainTextDoc(s: string): TextNode {
   return { type: "doc", content: paragraphs };
 }
 
+/**
+ * Rebuild a TipTap doc with new text but preserve the existing styling.
+ * v0 renders single-style-per-element, so we snapshot the first text run's
+ * marks and apply them to every paragraph in the new doc.
+ */
+export function setTextPreservingStyle(prev: TextNode | undefined, newText: string): TextNode {
+  let firstMarks: TextNode["marks"] | undefined;
+  if (prev) {
+    walk(prev, (n) => {
+      if (firstMarks === undefined && n.type === "text") firstMarks = n.marks ?? [];
+    });
+  }
+  const marks = firstMarks ?? [];
+  const paragraphs = newText.split(/\n/).map<TextNode>((line) => ({
+    type: "paragraph",
+    content: line ? [{ type: "text", text: line, marks: marks.length ? marks : undefined }] : [],
+  }));
+  return { type: "doc", content: paragraphs };
+}
+
+/** Return the marks of the first text run in a doc (used by the format painter). */
+export function firstRunMarks(node: TextNode | undefined): TextNode["marks"] {
+  if (!node) return undefined;
+  let m: TextNode["marks"] | undefined;
+  walk(node, (n) => {
+    if (m === undefined && n.type === "text") m = n.marks ?? [];
+  });
+  return m;
+}
+
+/** Apply the given marks to every text run in a doc. */
+export function applyMarksToAll(node: TextNode, marks: TextNode["marks"]): TextNode {
+  const next = marks && marks.length ? marks : undefined;
+  return mapText(node, (run) => ({ ...run, marks: next ? [...next] : undefined }));
+}
+
 export function firstTextStyle(node: TextNode | undefined): {
   color?: string;
   fontFamily?: string;
   fontSize?: number;
+  fontWeight?: number;
+  lineHeight?: number;
+  letterSpacing?: number;
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
@@ -116,6 +180,9 @@ export function firstTextStyle(node: TextNode | undefined): {
         if (a.color) result.color = a.color;
         if (a.fontFamily) result.fontFamily = a.fontFamily;
         if (a.fontSize) result.fontSize = a.fontSize;
+        if (a.fontWeight) result.fontWeight = a.fontWeight;
+        if (a.lineHeight) result.lineHeight = a.lineHeight;
+        if (typeof a.letterSpacing === "number") result.letterSpacing = a.letterSpacing;
       }
     }
     result.found = true;
@@ -163,7 +230,14 @@ export function setHighlightAll(node: TextNode, color: string | null): TextNode 
 
 export function setTextStyleAll(
   node: TextNode,
-  patch: { color?: string; fontFamily?: string; fontSize?: number }
+  patch: {
+    color?: string;
+    fontFamily?: string;
+    fontSize?: number;
+    fontWeight?: number;
+    lineHeight?: number;
+    letterSpacing?: number;
+  }
 ): TextNode {
   return mapText(node, (run) => {
     const marks = run.marks ? [...run.marks] : [];

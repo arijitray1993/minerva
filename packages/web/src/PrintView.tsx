@@ -3,8 +3,10 @@ import { Stage, Layer, Rect } from "react-konva";
 import type { DeckT, ElementT, SlideT } from "@minerva/schema";
 import { Text, Ellipse, Image as KImage, Line, Arrow } from "react-konva";
 import useImage from "use-image";
-import { firstTextStyle, plainText, ensureFontLoaded } from "./text";
-import { SHAPE_GEOMETRY, scalePolygon } from "./shapes";
+import { firstTextStyle, plainText, ensureFontLoaded, ensureFontWeightLoaded } from "./text";
+import { SHAPE_GEOMETRY, scalePolygon, roundRectPath } from "./shapes";
+import { Group } from "react-konva";
+import { TableEl } from "./TableEl";
 
 /**
  * Print view — renders every slide stacked at 1:1 with `page-break-after: always`.
@@ -18,23 +20,40 @@ export function PrintView() {
   useEffect(() => {
     fetch("/api/deck").then((r) => r.json()).then(async (d: DeckT) => {
       setDeck(d);
-      // Pre-load every font that appears in the deck.
+      // Walk every text element so we pre-load each (family, weight, italic)
+      // tuple the deck actually uses — listing a weight in the Google Fonts
+      // URL is not enough; the file is only fetched when something uses it.
       const families = new Set<string>();
+      const tuples = new Set<string>(); // family|weight|italic
       for (const slide of d.slides) {
         for (const el of slide.elements) {
-          if (el.type === "text") {
-            const fs = firstTextStyle(el.content);
-            if (fs.fontFamily) families.add(fs.fontFamily);
-          }
+          if (el.type !== "text") continue;
+          const fs = firstTextStyle(el.content);
+          const family = fs.fontFamily;
+          if (!family) continue;
+          families.add(family);
+          const weight = fs.fontWeight ?? (fs.bold ? 700 : 400);
+          tuples.add(`${family}|${weight}|${fs.italic ? "1" : "0"}`);
         }
       }
       await Promise.all(Array.from(families).map((f) => ensureFontLoaded(f)));
+      await Promise.all(
+        Array.from(tuples).map((t) => {
+          const [family, weight, italic] = t.split("|");
+          return ensureFontWeightLoaded(family, parseInt(weight, 10), italic === "1");
+        })
+      );
       // Give browser a tick to apply fonts + load images via konva.
       setTimeout(() => setReady(true), 250);
     });
   }, []);
 
   if (!deck) return <div>Loading…</div>;
+
+  const filterSlide = new URLSearchParams(location.search).get("slide");
+  const slides = filterSlide
+    ? deck.slides.filter((s) => s.id === filterSlide)
+    : deck.slides;
 
   return (
     <>
@@ -52,8 +71,8 @@ export function PrintView() {
         .print-slide:last-child { page-break-after: auto; break-after: auto; }
       `}</style>
       <div data-print-ready={ready ? "1" : "0"}>
-        {deck.slides.map((slide) => (
-          <div key={slide.id} className="print-slide">
+        {slides.map((slide) => (
+          <div key={slide.id} data-slide-id={slide.id} className="print-slide">
             <Stage width={deck.size.w} height={deck.size.h}>
               <Layer>
                 <Rect x={0} y={0} width={deck.size.w} height={deck.size.h} fill={slide.background?.fill ?? "#ffffff"} />
@@ -83,6 +102,11 @@ function PrintEl({ el }: { el: ElementT }) {
   const common = { x: el.x, y: el.y, rotation: el.rotation ?? 0 };
   if (el.type === "text") {
     const style = firstTextStyle(el.content);
+    const weight = style.fontWeight ?? (style.bold ? 700 : undefined);
+    const parts: string[] = [];
+    if (style.italic) parts.push("italic");
+    if (weight !== undefined) parts.push(String(weight));
+    const fontStyle = parts.join(" ") || "normal";
     return (
       <Text
         {...common}
@@ -94,7 +118,9 @@ function PrintEl({ el }: { el: ElementT }) {
         padding={el.style?.padding ?? 0}
         fontFamily={style.fontFamily ?? "Inter, system-ui, sans-serif"}
         fontSize={style.fontSize ?? 24}
-        fontStyle={`${style.italic ? "italic" : ""} ${style.bold ? "bold" : ""}`.trim() || "normal"}
+        fontStyle={fontStyle}
+        lineHeight={style.lineHeight ?? 1}
+        letterSpacing={style.letterSpacing ?? 0}
         textDecoration={style.underline ? "underline" : ""}
         fill={style.color ?? "#111"}
         {...shadowProps(el.style)}
@@ -120,10 +146,20 @@ function PrintEl({ el }: { el: ElementT }) {
       const arrowEnd = !!style.arrowEnd || geom.kind === "arrow";
       return <Arrow {...common} points={[0, 0, el.w, el.h]} stroke={stroke ?? fill} fill={stroke ?? fill} strokeWidth={strokeWidth || 2} opacity={opacity} pointerAtBeginning={arrowStart} pointerAtEnding={arrowEnd} pointerLength={Math.max(8, (strokeWidth || 2) * 4)} pointerWidth={Math.max(8, (strokeWidth || 2) * 4)} {...sh} />;
     }
+    if (geom.kind === "curve") {
+      const cx = style.controlX ?? el.w / 2;
+      const cy = style.controlY ?? el.h / 2;
+      const arrowStart = !!style.arrowStart;
+      const arrowEnd = !!style.arrowEnd;
+      return <Arrow {...common} points={[0, 0, cx, cy, el.w, el.h]} tension={0.5} stroke={stroke ?? fill} fill={stroke ?? fill} strokeWidth={strokeWidth || 2} opacity={opacity} pointerAtBeginning={arrowStart} pointerAtEnding={arrowEnd} pointerLength={Math.max(8, (strokeWidth || 2) * 4)} pointerWidth={Math.max(8, (strokeWidth || 2) * 4)} {...sh} />;
+    }
     return <Line {...common} points={scalePolygon(geom.points, el.w, el.h)} closed={geom.closed} fill={fill} stroke={stroke} strokeWidth={strokeWidth} opacity={opacity} {...sh} />;
   }
   if (el.type === "image") {
     return <PrintImage el={el} />;
+  }
+  if (el.type === "table") {
+    return <TableEl el={el} common={common} />;
   }
   return null;
 }
@@ -131,5 +167,21 @@ function PrintEl({ el }: { el: ElementT }) {
 function PrintImage({ el }: { el: any }) {
   const src = el.src.startsWith("http") || el.src.startsWith("/") ? el.src : `/${el.src}`;
   const [img] = useImage(src, "anonymous");
-  return <KImage x={el.x} y={el.y} rotation={el.rotation ?? 0} width={el.w} height={el.h} image={img} opacity={el.style?.opacity ?? 1} {...shadowProps(el.style)} />;
+  const opacity = el.style?.opacity ?? 1;
+  const radius = el.style?.radius ?? 0;
+  if (radius > 0) {
+    return (
+      <Group
+        x={el.x}
+        y={el.y}
+        rotation={el.rotation ?? 0}
+        width={el.w}
+        height={el.h}
+        clipFunc={(ctx: any) => roundRectPath(ctx, 0, 0, el.w, el.h, radius)}
+      >
+        <KImage width={el.w} height={el.h} image={img} opacity={opacity} />
+      </Group>
+    );
+  }
+  return <KImage x={el.x} y={el.y} rotation={el.rotation ?? 0} width={el.w} height={el.h} image={img} opacity={opacity} {...shadowProps(el.style)} />;
 }

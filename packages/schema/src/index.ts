@@ -30,6 +30,9 @@ const TextStyleMark = z.object({
     color: Color.optional(),
     fontFamily: z.string().optional(),
     fontSize: z.number().positive().optional(),
+    fontWeight: z.number().min(100).max(900).optional(),
+    lineHeight: z.number().positive().optional(),
+    letterSpacing: z.number().optional(),
   }),
 });
 
@@ -119,6 +122,7 @@ export const SHAPE_KINDS = [
   // Lines
   "line",
   "arrow",
+  "curveQuad",
 ] as const;
 export type ShapeKind = (typeof SHAPE_KINDS)[number];
 
@@ -129,6 +133,9 @@ export const ShapeElement = ElementBase.extend({
     radius: z.number().nonnegative().optional(),
     arrowStart: z.boolean().optional(),
     arrowEnd: z.boolean().optional(),
+    // For curveQuad: control point offset from element origin (slide coords).
+    controlX: z.number().optional(),
+    controlY: z.number().optional(),
   }).optional(),
 });
 
@@ -137,7 +144,43 @@ export const ImageElement = ElementBase.extend({
   src: z.string().describe("Relative path under assets/ or absolute URL"),
   alt: z.string().optional(),
   fit: z.enum(["contain", "cover", "fill"]).default("contain"),
-  style: BaseStyle.optional(),
+  style: BaseStyle.extend({
+    /** Corner radius in pixels for rounded image edges. Same field name as ShapeElement.style.radius. */
+    radius: z.number().nonnegative().optional(),
+  }).optional(),
+});
+
+const TableCell = z.object({
+  content: TextNode,
+  style: z
+    .object({
+      fill: Color.nullable().optional(),
+      align: z.enum(["left", "center", "right", "justify"]).optional(),
+      verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
+    })
+    .optional(),
+});
+
+export const TableElement = ElementBase.extend({
+  type: z.literal("table"),
+  rows: z.number().int().positive(),
+  cols: z.number().int().positive(),
+  cells: z.array(z.array(TableCell)),
+  headerRow: z.boolean().optional(),
+  headerCol: z.boolean().optional(),
+  colWidths: z.array(z.number().positive()).optional(),
+  rowHeights: z.array(z.number().positive()).optional(),
+  style: BaseStyle.extend({
+    borderColor: Color.optional(),
+    borderWidth: z.number().nonnegative().optional(),
+    cellPadding: z.number().nonnegative().optional(),
+    fontFamily: z.string().optional(),
+    fontSize: z.number().positive().optional(),
+    color: Color.optional(),
+    headerFill: Color.optional(),
+    headerColor: Color.optional(),
+    headerFontWeight: z.number().min(100).max(900).optional(),
+  }).optional(),
 });
 
 export type GroupElementT = z.infer<typeof ElementBase> & {
@@ -151,7 +194,7 @@ export const GroupElement: z.ZodType<GroupElementT, z.ZodTypeDef, any> = z.lazy(
   })
 );
 
-export const Element = z.union([TextElement, ShapeElement, ImageElement, GroupElement]);
+export const Element = z.union([TextElement, ShapeElement, ImageElement, TableElement, GroupElement]);
 export type ElementT = z.infer<typeof Element>;
 
 export const Slide = z.object({
@@ -185,6 +228,8 @@ export type SlideT = z.infer<typeof Slide>;
 export type TextElementT = z.infer<typeof TextElement>;
 export type ShapeElementT = z.infer<typeof ShapeElement>;
 export type ImageElementT = z.infer<typeof ImageElement>;
+export type TableElementT = z.infer<typeof TableElement>;
+export type TableCellT = z.infer<typeof TableCell>;
 
 export const Comment = z.object({
   id: z.string().min(1),
@@ -220,4 +265,41 @@ export function newId(prefix = "el"): string {
   const t = Date.now().toString(36);
   const r = Math.random().toString(36).slice(2, 8);
   return `${prefix}-${t}-${r}`;
+}
+
+export function emptyTableCell(): TableCellT {
+  return {
+    content: { type: "doc", content: [{ type: "paragraph", content: [] }] },
+  };
+}
+
+export function newTable(rows: number, cols: number, opts?: Partial<TableElementT>): TableElementT {
+  const cells = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => emptyTableCell())
+  );
+  return TableElement.parse({
+    id: newId("table"),
+    type: "table",
+    x: opts?.x ?? 200,
+    y: opts?.y ?? 200,
+    w: opts?.w ?? 600,
+    h: opts?.h ?? 240,
+    rotation: opts?.rotation ?? 0,
+    rows,
+    cols,
+    cells,
+    headerRow: opts?.headerRow ?? true,
+    style: {
+      borderColor: "#333",
+      borderWidth: 1,
+      cellPadding: 8,
+      fontFamily: "Inter, system-ui, sans-serif",
+      fontSize: 16,
+      color: "#111",
+      headerFill: "#1f2937",
+      headerColor: "#ffffff",
+      headerFontWeight: 700,
+      ...(opts?.style ?? {}),
+    },
+  });
 }

@@ -15,6 +15,28 @@ export function App() {
   const selectedIds = useStore((s) => s.selectedIds);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
+  const formatToPaint = useStore((s) => s.formatToPaint);
+  const applyFormatFromSource = useStore((s) => s.applyFormatFromSource);
+  const setFormatToPaint = useStore((s) => s.setFormatToPaint);
+
+  // Format painter: when armed, apply on next single-element selection that
+  // isn't the source itself.
+  useEffect(() => {
+    if (!formatToPaint || !currentSlideId) return;
+    if (selectedIds.length !== 1) return;
+    if (selectedIds[0] === formatToPaint.sourceId) return;
+    applyFormatFromSource(currentSlideId, selectedIds[0]);
+  }, [selectedIds, formatToPaint, currentSlideId, applyFormatFromSource]);
+
+  // Escape cancels the format painter.
+  useEffect(() => {
+    if (!formatToPaint) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFormatToPaint(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [formatToPaint, setFormatToPaint]);
 
   useEffect(() => {
     loadDeck().catch((err) => console.error(err));

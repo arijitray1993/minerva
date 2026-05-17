@@ -65,6 +65,33 @@ export function connectWebsocket() {
   };
 }
 
+export async function submitClaudeComment(c: {
+  slideId: string;
+  targetIds: string[];
+  request: string;
+}): Promise<void> {
+  // Read current comments, append, write back. Race window with Claude's own
+  // edits is small; if needed later we can promote this to a server-side POST.
+  const cur = await fetch("/api/comments").then((r) => (r.ok ? r.json() : { comments: [] }));
+  const id = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const newComment = {
+    id,
+    slideId: c.slideId,
+    targetIds: c.targetIds,
+    author: "human" as const,
+    request: c.request,
+    status: "open" as const,
+    createdAt: new Date().toISOString(),
+  };
+  const next = { comments: [...(cur.comments ?? []), newComment] };
+  const r = await fetch("/api/comments", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(next),
+  });
+  if (!r.ok) throw new Error(`comment submit failed: ${r.status}`);
+}
+
 export async function uploadAsset(file: File | Blob, filename?: string): Promise<{ path: string; url: string }> {
   const fd = new FormData();
   fd.append("file", file, filename ?? (file instanceof File ? file.name : "image.png"));

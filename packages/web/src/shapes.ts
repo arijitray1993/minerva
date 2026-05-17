@@ -33,7 +33,7 @@ export const SHAPE_GROUPS: Record<ShapeKindCategory, ShapeKind[]> = {
   Arrows: ["arrowRight", "arrowLeft", "arrowUp", "arrowDown", "arrowDouble"],
   Callouts: ["speechRect", "speechEllipse"],
   Flowchart: ["flowProcess", "flowDecision", "flowTerminator", "flowData"],
-  Lines: ["line", "arrow"],
+  Lines: ["line", "arrow", "curveQuad"],
 };
 
 export const SHAPE_LABELS: Record<ShapeKind, string> = {
@@ -67,11 +67,12 @@ export const SHAPE_LABELS: Record<ShapeKind, string> = {
   flowData: "Flow: data",
   line: "Line",
   arrow: "Arrow",
+  curveQuad: "Curved line",
 };
 
 /** A polygon expressed in unit space (0..1 along each axis). */
 type UnitPolygon = { kind: "polygon"; points: number[]; closed: boolean };
-type SpecialShape = { kind: "rect" } | { kind: "ellipse" } | { kind: "roundedRect" } | { kind: "line" } | { kind: "arrow" };
+type SpecialShape = { kind: "rect" } | { kind: "ellipse" } | { kind: "roundedRect" } | { kind: "line" } | { kind: "arrow" } | { kind: "curve" };
 type ShapeGeometry = UnitPolygon | SpecialShape;
 
 /** Star helper: n points, alternating outer/inner radius. Output is in unit space centred at (0.5, 0.5). */
@@ -109,6 +110,7 @@ export const SHAPE_GEOMETRY: Record<ShapeKind, ShapeGeometry> = {
   ellipse: { kind: "ellipse" },
   line: { kind: "line" },
   arrow: { kind: "arrow" },
+  curveQuad: { kind: "curve" },
 
   triangle: { kind: "polygon", points: [0.5, 0, 0, 1, 1, 1], closed: true },
   rightTriangle: { kind: "polygon", points: [0, 0, 0, 1, 1, 1], closed: true },
@@ -260,6 +262,32 @@ export function scalePolygon(points: number[], w: number, h: number): number[] {
     out[i + 1] = points[i + 1] * h;
   }
   return out;
+}
+
+/**
+ * Trace a rounded-rect path on the given 2D context. Used as a Konva clipFunc
+ * to give images (and any other clipped node) soft corners.
+ */
+export function roundRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.arcTo(x + w, y, x + w, y + radius, radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.arcTo(x + w, y + h, x + w - radius, y + h, radius);
+  ctx.lineTo(x + radius, y + h);
+  ctx.arcTo(x, y + h, x, y + h - radius, radius);
+  ctx.lineTo(x, y + radius);
+  ctx.arcTo(x, y, x + radius, y, radius);
+  ctx.closePath();
 }
 
 export function shapeCategoryOf(kind: ShapeKind): ShapeKindCategory {

@@ -186,3 +186,76 @@ body {
   width: 100%;
   font-size: 12px;
 }
+
+.context-menu {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  min-width: 200px;
+}
+.context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.context-menu button:hover {
+  background: var(--panel-2);
+}
+
+.comment-dialog {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  min-width: 320px;
+}
+.comment-dialog-header {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.comment-dialog textarea {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.comment-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.comment-dialog-actions button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.comment-dialog-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.comment-dialog-actions button:last-child {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}

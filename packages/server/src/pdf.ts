@@ -19,23 +19,7 @@ export async function exportDeckPdf(opts: {
   try {
     const page = await browser.newPage();
     await page.goto(`${opts.baseUrl}/print`, { waitUntil: "networkidle" });
-
-    // Wait for fonts and images to settle.
-    await page.evaluate(async () => {
-      const fonts = (document as any).fonts;
-      if (fonts && typeof fonts.ready?.then === "function") {
-        await fonts.ready;
-      }
-      const imgs = Array.from(document.images);
-      await Promise.all(
-        imgs.map((img) =>
-          img.complete ? Promise.resolve() : new Promise<void>((r) => {
-            img.addEventListener("load", () => r());
-            img.addEventListener("error", () => r());
-          })
-        )
-      );
-    });
+    await waitForAssets(page);
 
     const pdf = await page.pdf({
       width: `${opts.deckSize.w}px`,
@@ -48,6 +32,60 @@ export async function exportDeckPdf(opts: {
   } finally {
     await browser.close();
   }
+}
+
+/**
+ * Render a single slide (by id) to a PNG buffer.
+ * Drives Playwright through `/print?slide=<id>` and screenshots the slide div.
+ */
+export async function renderSlidePng(opts: {
+  baseUrl: string;
+  deckSize: { w: number; h: number };
+  slideId: string;
+}): Promise<Buffer> {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage({
+      viewport: { width: opts.deckSize.w, height: opts.deckSize.h },
+      deviceScaleFactor: 2,
+    });
+    await page.goto(
+      `${opts.baseUrl}/print?slide=${encodeURIComponent(opts.slideId)}`,
+      { waitUntil: "networkidle" }
+    );
+    await waitForAssets(page);
+
+    const png = await page.screenshot({
+      type: "png",
+      clip: { x: 0, y: 0, width: opts.deckSize.w, height: opts.deckSize.h },
+      omitBackground: false,
+    });
+    return png;
+  } finally {
+    await browser.close();
+  }
+}
+
+async function waitForAssets(page: import("playwright-core").Page) {
+  // PrintView signals readiness on a wrapper div once fonts + Konva paint settle.
+  await page.waitForSelector('[data-print-ready="1"]', { timeout: 10000 });
+  await page.evaluate(async () => {
+    const fonts = (document as any).fonts;
+    if (fonts && typeof fonts.ready?.then === "function") {
+      await fonts.ready;
+    }
+    const imgs = Array.from(document.images);
+    await Promise.all(
+      imgs.map((img) =>
+        img.complete ? Promise.resolve() : new Promise<void>((r) => {
+          img.addEventListener("load", () => r());
+          img.addEventListener("error", () => r());
+        })
+      )
+    );
+    // Two paint frames so Konva text remeasures with loaded fonts and redraws.
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+  });
 }
 
 async function launchBrowser(): Promise<Browser> {

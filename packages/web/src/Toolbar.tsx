@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useStore } from "./store";
 import { uploadAsset } from "./sync";
 import type { ElementT, ShapeKind } from "@minerva/schema";
+import { newTable } from "@minerva/schema";
 import { plainTextDoc } from "./text";
 import { SHAPE_GROUPS, SHAPE_LABELS, type ShapeKindCategory } from "./shapes";
 
@@ -18,6 +19,11 @@ export function Toolbar() {
   const addSlide = useStore((s) => s.addSlide);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
+  const tool = useStore((s) => s.tool);
+  const setTool = useStore((s) => s.setTool);
+  const selectedIds = useStore((s) => s.selectedIds);
+  const formatToPaint = useStore((s) => s.formatToPaint);
+  const setFormatToPaint = useStore((s) => s.setFormatToPaint);
   const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
 
   if (!deck || !currentSlideId) return <div className="toolbar" />;
@@ -48,6 +54,9 @@ export function Toolbar() {
     };
     addElement(currentSlideId, el);
     setShapeMenuOpen(false);
+  };
+  const addTable = () => {
+    addElement(currentSlideId, newTable(3, 3));
   };
   const addImage = async () => {
     const input = document.createElement("input");
@@ -110,6 +119,30 @@ export function Toolbar() {
         )}
       </div>
       <button onClick={addImage}>+ Image</button>
+      <button onClick={addTable}>+ Table</button>
+      <button
+        onClick={() => setTool(tool === "curve" ? "select" : "curve")}
+        className={tool === "curve" ? "active" : ""}
+        title="Draw a curved line — click start, click control, click end"
+      >
+        {tool === "curve" ? "✏︎ drawing curve…" : "+ Curve"}
+      </button>
+      <span className="sep" />
+      <button
+        onClick={() => {
+          if (formatToPaint) setFormatToPaint(null);
+          else if (selectedIds.length === 1) setFormatToPaint({ sourceId: selectedIds[0] });
+        }}
+        className={formatToPaint ? "active" : ""}
+        disabled={!formatToPaint && selectedIds.length !== 1}
+        title={
+          formatToPaint
+            ? "Click any other element to paint this format. Esc to cancel."
+            : "Select one element, then click to copy its formatting to another."
+        }
+      >
+        {formatToPaint ? "🖌 paint format…" : "Format painter"}
+      </button>
       <span className="sep" />
       <button onClick={addSlide}>+ Slide</button>
       <span className="sep" />
