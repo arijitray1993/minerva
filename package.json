@@ -1,17 +1,50 @@
 {
-  "name": "minerva-monorepo",
-  "private": true,
-  "version": "0.0.1",
-  "description": "Minerva — a Google Slides-like editor that both humans and Claude can edit.",
+  "name": "minerva-slides",
+  "version": "0.1.0",
+  "description": "A Google Slides-like editor where humans use a WYSIWYG canvas and Claude edits the same deck JSON.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Arijit Ray",
+  "keywords": [
+    "slides",
+    "presentation",
+    "editor",
+    "claude",
+    "konva",
+    "wysiwyg"
+  ],
+  "bin": {
+    "minerva": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "web-dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "node scripts/build-publish.mjs",
+    "build:workspaces": "npm run build --workspaces --if-present",
     "dev": "npm run dev -w @minerva/server",
-    "minerva": "node packages/server/dist/cli.js"
+    "minerva": "node packages/server/dist/cli.js",
+    "prepack": "node scripts/build-publish.mjs",
+    "pack:test": "node scripts/build-publish.mjs && npm pack"
   },
-  "bin": {
-    "minerva": "packages/server/dist/cli.js"
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1",
+    "open": "^10.1.0",
+    "playwright-core": "^1.48.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
   }
 }

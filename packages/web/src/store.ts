@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { Editor } from "@tiptap/react";
 import type { DeckT, ElementT, SlideT } from "@minerva/schema";
 import { firstRunMarks, applyMarksToAll } from "./text";
 
@@ -18,6 +19,9 @@ type State = {
   tool: "select" | "curve";
   /** When set, the next non-source selection will receive this element's formatting. */
   formatToPaint: { sourceId: string } | null;
+  /** Set while the user is editing a text element inline. The inspector reads
+   *  it to provide selection-aware formatting controls. */
+  activeTextEditor: Editor | null;
 };
 
 type Actions = {
@@ -39,6 +43,7 @@ type Actions = {
   setTool: (tool: "select" | "curve") => void;
   setFormatToPaint: (v: { sourceId: string } | null) => void;
   applyFormatFromSource: (slideId: string, targetId: string) => void;
+  setActiveTextEditor: (ed: Editor | null) => void;
 };
 
 export const useStore = create<State & Actions>((set, get) => ({
@@ -51,6 +56,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   fontRevision: 0,
   tool: "select",
   formatToPaint: null,
+  activeTextEditor: null,
 
   setDeck: (deck, fromRemote) => {
     set((s) => {
@@ -162,6 +168,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   bumpFontRevision: () => set((s) => ({ fontRevision: s.fontRevision + 1 })),
   setTool: (tool) => set({ tool }),
   setFormatToPaint: (v) => set({ formatToPaint: v }),
+  setActiveTextEditor: (ed) => set({ activeTextEditor: ed }),
 
   applyFormatFromSource: (slideId, targetId) => {
     const s = get();

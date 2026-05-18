@@ -3,10 +3,11 @@ import { Stage, Layer, Rect } from "react-konva";
 import type { DeckT, ElementT, SlideT } from "@minerva/schema";
 import { Text, Ellipse, Image as KImage, Line, Arrow } from "react-konva";
 import useImage from "use-image";
-import { firstTextStyle, plainText, ensureFontLoaded, ensureFontWeightLoaded } from "./text";
+import { firstTextStyle, plainText, ensureFontLoaded, ensureFontWeightLoaded, layoutTextDoc } from "./text";
 import { SHAPE_GEOMETRY, scalePolygon, roundRectPath } from "./shapes";
-import { Group } from "react-konva";
+import { Group, Rect as KonvaRect } from "react-konva";
 import { TableEl } from "./TableEl";
+import { Fragment } from "react";
 
 /**
  * Print view — renders every slide stacked at 1:1 with `page-break-after: always`.
@@ -101,30 +102,57 @@ function shadowProps(style: any) {
 function PrintEl({ el }: { el: ElementT }) {
   const common = { x: el.x, y: el.y, rotation: el.rotation ?? 0 };
   if (el.type === "text") {
-    const style = firstTextStyle(el.content);
-    const weight = style.fontWeight ?? (style.bold ? 700 : undefined);
-    const parts: string[] = [];
-    if (style.italic) parts.push("italic");
-    if (weight !== undefined) parts.push(String(weight));
-    const fontStyle = parts.join(" ") || "normal";
+    const padding = el.style?.padding ?? 0;
+    const align = (el.style?.align ?? "left") as "left" | "center" | "right" | "justify";
+    const valign = el.style?.verticalAlign ?? "top";
+    const layout = layoutTextDoc(el.content, Math.max(1, el.w - padding * 2), undefined, align);
+    let vShift = 0;
+    if (valign === "middle") vShift = Math.max(0, (el.h - padding * 2 - layout.totalHeight) / 2);
+    else if (valign === "bottom") vShift = Math.max(0, el.h - padding * 2 - layout.totalHeight);
     return (
-      <Text
-        {...common}
-        width={el.w}
-        height={el.h}
-        text={plainText(el.content)}
-        align={el.style?.align ?? "left"}
-        verticalAlign={el.style?.verticalAlign ?? "top"}
-        padding={el.style?.padding ?? 0}
-        fontFamily={style.fontFamily ?? "Inter, system-ui, sans-serif"}
-        fontSize={style.fontSize ?? 24}
-        fontStyle={fontStyle}
-        lineHeight={style.lineHeight ?? 1}
-        letterSpacing={style.letterSpacing ?? 0}
-        textDecoration={style.underline ? "underline" : ""}
-        fill={style.color ?? "#111"}
-        {...shadowProps(el.style)}
-      />
+      <Group {...common} width={el.w} height={el.h} {...shadowProps(el.style)}>
+        {layout.items.map((item, i) => {
+          const parts: string[] = [];
+          if (item.style.italic) parts.push("italic");
+          if (item.style.fontWeight !== 400) parts.push(String(item.style.fontWeight));
+          const fontStyle = parts.join(" ") || "normal";
+          const decoParts: string[] = [];
+          if (item.style.underline) decoParts.push("underline");
+          if (item.style.strike) decoParts.push("line-through");
+          return (
+            <Fragment key={i}>
+              {item.style.highlight && (
+                <KonvaRect
+                  x={padding + item.x}
+                  y={padding + vShift + item.y}
+                  width={item.width}
+                  height={item.baselineHeight}
+                  fill={item.style.highlight}
+                  listening={false}
+                />
+              )}
+              <Text
+                x={padding + item.x}
+                y={padding + vShift + item.y}
+                text={item.text}
+                fontFamily={item.style.fontFamily}
+                fontSize={
+                  item.style.superscript || item.style.subscript
+                    ? item.style.fontSize * 0.65
+                    : item.style.fontSize
+                }
+                fontStyle={fontStyle}
+                letterSpacing={item.style.letterSpacing}
+                lineHeight={1}
+                wrap="none"
+                textDecoration={decoParts.join(" ")}
+                fill={item.style.color}
+                listening={false}
+              />
+            </Fragment>
+          );
+        })}
+      </Group>
     );
   }
   if (el.type === "shape") {
@@ -169,6 +197,7 @@ function PrintImage({ el }: { el: any }) {
   const [img] = useImage(src, "anonymous");
   const opacity = el.style?.opacity ?? 1;
   const radius = el.style?.radius ?? 0;
+  const crop = el.crop ? { x: el.crop.x, y: el.crop.y, width: el.crop.w, height: el.crop.h } : undefined;
   if (radius > 0) {
     return (
       <Group
@@ -179,9 +208,9 @@ function PrintImage({ el }: { el: any }) {
         height={el.h}
         clipFunc={(ctx: any) => roundRectPath(ctx, 0, 0, el.w, el.h, radius)}
       >
-        <KImage width={el.w} height={el.h} image={img} opacity={opacity} />
+        <KImage width={el.w} height={el.h} image={img} opacity={opacity} crop={crop} />
       </Group>
     );
   }
-  return <KImage x={el.x} y={el.y} rotation={el.rotation ?? 0} width={el.w} height={el.h} image={img} opacity={opacity} {...shadowProps(el.style)} />;
+  return <KImage x={el.x} y={el.y} rotation={el.rotation ?? 0} width={el.w} height={el.h} image={img} opacity={opacity} crop={crop} {...shadowProps(el.style)} />;
 }

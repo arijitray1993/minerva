@@ -260,6 +260,276 @@ export function setTextStyleAll(
   });
 }
 
+/**
+ * Multi-run text layout for the v0 multi-style renderer. Walks the TipTap doc,
+ * splits text runs into word tokens, measures each with its computed run style,
+ * lays them out left-to-right with word-level wrap at maxWidth, and emits
+ * positioned items the Konva renderer can draw one-to-one.
+ *
+ * Output coords are local to the text element (origin at the top-left of the
+ * element's box). The caller positions the parent Group at (el.x, el.y).
+ */
+export type RunStyle = {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: number;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  color: string;
+  highlight: string | null;
+  superscript: boolean;
+  subscript: boolean;
+  lineHeight: number;
+  letterSpacing: number;
+};
+
+export type LayoutItem = {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  baselineHeight: number;
+  lineIndex: number;
+  style: RunStyle;
+};
+
+export type LayoutResult = {
+  items: LayoutItem[];
+  totalHeight: number;
+};
+
+const DEFAULT_RUN_STYLE: RunStyle = {
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 24,
+  fontWeight: 400,
+  italic: false,
+  underline: false,
+  strike: false,
+  color: "#111111",
+  highlight: null,
+  superscript: false,
+  subscript: false,
+  lineHeight: 1,
+  letterSpacing: 0,
+};
+
+function applyMarksToStyle(marks: TextNode["marks"] | undefined, base: RunStyle): RunStyle {
+  const s: RunStyle = { ...base };
+  if (!marks) return s;
+  for (const m of marks) {
+    switch (m.type) {
+      case "bold": s.fontWeight = Math.max(s.fontWeight, 700); break;
+      case "italic": s.italic = true; break;
+      case "underline": s.underline = true; break;
+      case "strike": s.strike = true; break;
+      case "superscript": s.superscript = true; break;
+      case "subscript": s.subscript = true; break;
+      case "textStyle": {
+        const a = (m as any).attrs ?? {};
+        if (a.color) s.color = a.color;
+        if (a.fontFamily) s.fontFamily = a.fontFamily;
+        if (typeof a.fontSize === "number") s.fontSize = a.fontSize;
+        if (typeof a.fontWeight === "number") s.fontWeight = a.fontWeight;
+        if (typeof a.lineHeight === "number") s.lineHeight = a.lineHeight;
+        if (typeof a.letterSpacing === "number") s.letterSpacing = a.letterSpacing;
+        break;
+      }
+      case "highlight": {
+        const a = (m as any).attrs ?? {};
+        if (a.color) s.highlight = a.color;
+        break;
+      }
+    }
+  }
+  return s;
+}
+
+let _measureCtx: CanvasRenderingContext2D | null = null;
+function measureCtx(): CanvasRenderingContext2D {
+  if (_measureCtx) return _measureCtx;
+  const c = document.createElement("canvas");
+  _measureCtx = c.getContext("2d")!;
+  return _measureCtx;
+}
+
+function fontString(s: RunStyle): string {
+  const sizeAdj = s.superscript || s.subscript ? s.fontSize * 0.65 : s.fontSize;
+  const italic = s.italic ? "italic " : "";
+  return `${italic}${s.fontWeight} ${sizeAdj}px "${s.fontFamily}"`;
+}
+
+function measureWidth(text: string, s: RunStyle): number {
+  const ctx = measureCtx();
+  ctx.font = fontString(s);
+  const w = ctx.measureText(text).width;
+  // Konva mimics letterSpacing per glyph; mirror it in measurement.
+  return w + Math.max(0, text.length - 1) * (s.letterSpacing ?? 0);
+}
+
+function stylesEqual(a: RunStyle, b: RunStyle): boolean {
+  return (
+    a.fontFamily === b.fontFamily &&
+    a.fontSize === b.fontSize &&
+    a.fontWeight === b.fontWeight &&
+    a.italic === b.italic &&
+    a.underline === b.underline &&
+    a.strike === b.strike &&
+    a.color === b.color &&
+    a.highlight === b.highlight &&
+    a.superscript === b.superscript &&
+    a.subscript === b.subscript &&
+    a.lineHeight === b.lineHeight &&
+    a.letterSpacing === b.letterSpacing
+  );
+}
+
+/** Split a run's text into atomic tokens: words and whitespace sequences. */
+function tokenize(text: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const isSpace = /\s/.test(text[i]);
+    let j = i + 1;
+    while (j < text.length && /\s/.test(text[j]) === isSpace) j++;
+    out.push(text.slice(i, j));
+    i = j;
+  }
+  return out;
+}
+
+export function layoutTextDoc(
+  doc: TextNode | undefined,
+  maxWidth: number,
+  baseOverride?: Partial<RunStyle>,
+  align: "left" | "center" | "right" | "justify" = "left"
+): LayoutResult {
+  const items: LayoutItem[] = [];
+  if (!doc) return { items, totalHeight: 0 };
+  const base: RunStyle = { ...DEFAULT_RUN_STYLE, ...(baseOverride ?? {}) };
+
+  // Collect paragraphs of runs (each run is {text, style}).
+  type Run = { text: string; style: RunStyle };
+  const paragraphs: Run[][] = [];
+  const walkPara = (p: TextNode): Run[] => {
+    const runs: Run[] = [];
+    const visit = (n: TextNode) => {
+      if (n.type === "text" && typeof n.text === "string" && n.text.length > 0) {
+        runs.push({ text: n.text, style: applyMarksToStyle(n.marks, base) });
+      }
+      for (const c of n.content ?? []) visit(c);
+    };
+    visit(p);
+    return runs;
+  };
+  if (doc.type === "paragraph") {
+    paragraphs.push(walkPara(doc));
+  } else if (doc.content) {
+    for (const child of doc.content) {
+      if (child.type === "paragraph") paragraphs.push(walkPara(child));
+      else paragraphs.push(walkPara(child));
+    }
+  } else if (doc.type === "text") {
+    paragraphs.push(walkPara(doc));
+  }
+
+  let y = 0;
+  for (const runs of paragraphs) {
+    // Lay this paragraph out as a sequence of tokens with word-level wrap.
+    type Placed = { text: string; style: RunStyle; width: number };
+    const lines: Placed[][] = [[]];
+    let xCursor = 0;
+    let lineMaxFont = base.fontSize;
+    let lineHeightMul = base.lineHeight;
+
+    const pushToWrap = (text: string, style: RunStyle) => {
+      const w = measureWidth(text, style);
+      const onlyWhitespace = /^\s+$/.test(text);
+      // If a non-whitespace token won't fit on the current non-empty line, wrap.
+      if (!onlyWhitespace && xCursor + w > maxWidth && xCursor > 0) {
+        // Trim trailing whitespace from previous line (visual nicety).
+        const cur = lines[lines.length - 1];
+        while (cur.length && /^\s+$/.test(cur[cur.length - 1].text)) cur.pop();
+        lines.push([]);
+        xCursor = 0;
+        lineMaxFont = style.fontSize;
+        lineHeightMul = style.lineHeight;
+      }
+      lines[lines.length - 1].push({ text, style, width: w });
+      xCursor += w;
+      if (style.fontSize > lineMaxFont) {
+        lineMaxFont = style.fontSize;
+        lineHeightMul = style.lineHeight;
+      }
+    };
+
+    for (const run of runs) {
+      for (const tok of tokenize(run.text)) pushToWrap(tok, run.style);
+    }
+
+    // Emit items per line, merging consecutive same-style tokens into one item.
+    // Merging matters: ctx.measureText("foo") + ctx.measureText("bar") drifts
+    // from ctx.measureText("foobar") because of kerning, so per-token rendering
+    // accumulates error. Merging makes single-style lines render identically to
+    // a single Konva.Text.
+    for (const line of lines) {
+      const lineHeight = lineMaxFont * (lineHeightMul || 1);
+      const lineIndex = items.length === 0 ? 0 : items[items.length - 1].lineIndex + 1;
+      // Group consecutive tokens with identical styles.
+      type Group = { text: string; style: RunStyle };
+      const groups: Group[] = [];
+      for (const placed of line) {
+        const prev = groups[groups.length - 1];
+        if (prev && stylesEqual(prev.style, placed.style)) {
+          prev.text += placed.text;
+        } else {
+          groups.push({ text: placed.text, style: placed.style });
+        }
+      }
+      let x = 0;
+      for (const g of groups) {
+        // Re-measure the merged text for an accurate width (captures kerning).
+        const w = measureWidth(g.text, g.style);
+        const s = g.style;
+        let runY = y;
+        if (s.superscript) runY = y - lineMaxFont * 0.25;
+        else if (s.subscript) runY = y + lineMaxFont * 0.25;
+        items.push({
+          text: g.text,
+          x,
+          y: runY,
+          width: w,
+          baselineHeight: lineHeight,
+          lineIndex,
+          style: s,
+        });
+        x += w;
+      }
+      y += lineHeight;
+    }
+  }
+
+  // Horizontal alignment per line.
+  if (align !== "left") {
+    const byLine = new Map<number, LayoutItem[]>();
+    for (const it of items) {
+      const arr = byLine.get(it.lineIndex) ?? [];
+      arr.push(it);
+      byLine.set(it.lineIndex, arr);
+    }
+    for (const lineItems of byLine.values()) {
+      const lineWidth = Math.max(...lineItems.map((it) => it.x + it.width));
+      let shift = 0;
+      if (align === "center") shift = (maxWidth - lineWidth) / 2;
+      else if (align === "right") shift = maxWidth - lineWidth;
+      // "justify" left-aligned for v0 (proper inter-word distribution can come later).
+      if (shift > 0) for (const it of lineItems) it.x += shift;
+    }
+  }
+
+  return { items, totalHeight: y };
+}
+
 function mapText(node: TextNode, fn: (run: TextNode) => TextNode): TextNode {
   if (node.type === "text") return fn(node);
   return {

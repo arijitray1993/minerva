@@ -48,9 +48,13 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key === "z" && !e.shiftKey) {
+      // Don't hijack undo/redo while typing in any text input or contenteditable
+      // (TipTap, Inspector textareas, the deck title field, etc.).
+      const inEditor = e.target instanceof HTMLElement &&
+        (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable);
+      if (meta && e.key === "z" && !e.shiftKey && !inEditor) {
         e.preventDefault(); undo();
-      } else if (meta && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+      } else if (meta && (e.key === "y" || (e.key === "z" && e.shiftKey)) && !inEditor) {
         e.preventDefault(); redo();
       } else if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0 && currentSlideId) {
         // Don't hijack when focus is in an input/textarea.

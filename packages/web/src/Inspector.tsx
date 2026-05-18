@@ -15,6 +15,7 @@ import {
   toggleMarkAll,
 } from "./text";
 import { SHAPE_LABELS } from "./shapes";
+import { TextEditToolbar } from "./TextEditOverlay";
 
 export function Inspector() {
   const deck = useStore((s) => s.deck);
@@ -334,6 +335,7 @@ function ElementInspector({ el, slideId }: { el: ElementT; slideId: string }) {
 }
 
 function TextStyleSection({ el, patch }: { el: TextElementT; patch: (p: Partial<ElementT>) => void }) {
+  const activeTextEditor = useStore((s) => s.activeTextEditor);
   const style = firstTextStyle(el.content);
   const fontFamily = style.fontFamily ?? "Inter";
   const fontSize = style.fontSize ?? 24;
@@ -362,12 +364,19 @@ function TextStyleSection({ el, patch }: { el: TextElementT; patch: (p: Partial<
 
   return (
     <>
-      <h3>Text</h3>
-      <textarea
-        style={{ width: "100%", minHeight: 60, background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4, padding: 6, fontSize: 12 }}
-        value={plainText(el.content)}
-        onChange={(e) => patch({ content: setTextPreservingStyle(el.content, e.target.value) } as any)}
-      />
+      <h3>Text {activeTextEditor && <span style={{ color: "var(--accent)", fontSize: 10 }}>· editing · Esc to commit</span>}</h3>
+      {activeTextEditor && (
+        <div style={{ marginBottom: 8 }}>
+          <TextEditToolbar editor={activeTextEditor} />
+        </div>
+      )}
+      {!activeTextEditor && (
+        <textarea
+          style={{ width: "100%", minHeight: 60, background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4, padding: 6, fontSize: 12 }}
+          value={plainText(el.content)}
+          onChange={(e) => patch({ content: setTextPreservingStyle(el.content, e.target.value) } as any)}
+        />
+      )}
 
       <div className="row">
         <label>font</label>

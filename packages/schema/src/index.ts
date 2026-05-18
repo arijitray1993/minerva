@@ -144,6 +144,16 @@ export const ImageElement = ElementBase.extend({
   src: z.string().describe("Relative path under assets/ or absolute URL"),
   alt: z.string().optional(),
   fit: z.enum(["contain", "cover", "fill"]).default("contain"),
+  /** Optional crop rect in the *source* image's pixel coordinates. When set,
+   *  only this portion of the source is drawn into the element's w×h slot. */
+  crop: z
+    .object({
+      x: z.number().nonnegative(),
+      y: z.number().nonnegative(),
+      w: z.number().positive(),
+      h: z.number().positive(),
+    })
+    .optional(),
   style: BaseStyle.extend({
     /** Corner radius in pixels for rounded image edges. Same field name as ShapeElement.style.radius. */
     radius: z.number().nonnegative().optional(),

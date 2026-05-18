@@ -259,3 +259,82 @@ body {
   border-color: var(--accent);
   color: white;
 }
+
+.text-edit-overlay .ProseMirror,
+.text-edit-overlay .tiptap-content,
+.text-edit-overlay .tiptap-content > div {
+  width: 100%;
+  height: 100%;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.text-edit-overlay .ProseMirror p {
+  margin: 0;
+  padding: 0;
+  line-height: inherit;
+}
+.text-edit-overlay .ProseMirror sup,
+.text-edit-overlay .ProseMirror sub {
+  font-size: 0.65em;
+}
+
+.text-edit-toolbar {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+.text-edit-toolbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+.text-edit-toolbar-inner button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-width: 24px;
+}
+.text-edit-toolbar-inner button:hover {
+  background: var(--panel-2);
+}
+.text-edit-toolbar-inner button.active {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+.text-edit-toolbar-inner .sep {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 2px;
+}
+.text-edit-toolbar-inner label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.text-edit-toolbar-inner input[type="color"] {
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+.text-edit-toolbar-inner input[type="number"] {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 12px;
+}

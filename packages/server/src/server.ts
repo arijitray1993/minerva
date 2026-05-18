@@ -130,10 +130,18 @@ export async function startServer({ root, port }: ServerOptions) {
     }
   });
 
-  // --- Static UI (served from the built web package in production) -----------
-  const webDist = resolve(root, "../web/dist"); // fallback for dev
-  const packagedWeb = resolve(__dirnameSafe(), "../../web/dist");
-  const staticDir = existsSync(packagedWeb) ? packagedWeb : (existsSync(webDist) ? webDist : null);
+  // --- Static UI (served from the built web package) -------------------------
+  // Search in both layouts:
+  //   - Bundled (npm-installed):  <pkg>/dist/cli.js  →  <pkg>/web-dist
+  //   - Monorepo dev:             <repo>/packages/server/dist/cli.js
+  //                                       →  <repo>/packages/web/dist
+  const here = __dirnameSafe();
+  const candidates = [
+    resolve(here, "../web-dist"),
+    resolve(here, "../../web/dist"),
+    resolve(here, "../../../packages/web/dist"),
+  ];
+  const staticDir = candidates.find((p) => existsSync(p)) ?? null;
   if (staticDir) {
     app.use(express.static(staticDir));
     app.get("*", (_req, res) => res.sendFile(join(staticDir, "index.html")));
@@ -141,7 +149,7 @@ export async function startServer({ root, port }: ServerOptions) {
     app.get("/", (_req, res) =>
       res
         .type("text/plain")
-        .send("UI bundle not found. Build packages/web first (npm run build -w @minerva/web).")
+        .send("Minerva UI bundle not found. If you're developing locally, run `npm run build` from the repo root.")
     );
   }
 
