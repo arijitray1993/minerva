@@ -21,22 +21,48 @@ export function PrintView() {
   useEffect(() => {
     fetch("/api/deck").then((r) => r.json()).then(async (d: DeckT) => {
       setDeck(d);
-      // Walk every text element so we pre-load each (family, weight, italic)
-      // tuple the deck actually uses — listing a weight in the Google Fonts
-      // URL is not enough; the file is only fetched when something uses it.
+      // Walk *every* text run (including ones with no explicit fontFamily
+      // mark) and collect (family, weight, italic) tuples so we pre-load
+      // every weight that will be rendered. Default base family = "Inter"
+      // (matches layoutTextDoc) so bold-applied-to-default-text loads
+      // Inter 700, not just whatever weight happened to be on the first run.
       const families = new Set<string>();
-      const tuples = new Set<string>(); // family|weight|italic
-      for (const slide of d.slides) {
-        for (const el of slide.elements) {
-          if (el.type !== "text") continue;
-          const fs = firstTextStyle(el.content);
-          const family = fs.fontFamily;
-          if (!family) continue;
+      const tuples = new Set<string>();
+      const collectFromDoc = (doc: any, baseFamily: string = "Inter", baseWeight: number = 400) => {
+        if (!doc || typeof doc !== "object") return;
+        if (doc.type === "text" && typeof doc.text === "string") {
+          let family = baseFamily;
+          let weight = baseWeight;
+          let italic = false;
+          for (const m of doc.marks ?? []) {
+            if (m.type === "bold") weight = Math.max(weight, 700);
+            else if (m.type === "italic") italic = true;
+            else if (m.type === "textStyle" && m.attrs) {
+              if (m.attrs.fontFamily) family = m.attrs.fontFamily;
+              if (typeof m.attrs.fontWeight === "number") weight = m.attrs.fontWeight;
+            }
+          }
           families.add(family);
-          const weight = fs.fontWeight ?? (fs.bold ? 700 : 400);
-          tuples.add(`${family}|${weight}|${fs.italic ? "1" : "0"}`);
+          tuples.add(`${family}|${weight}|${italic ? "1" : "0"}`);
         }
-      }
+        if (Array.isArray(doc.content)) for (const c of doc.content) collectFromDoc(c, baseFamily, baseWeight);
+      };
+      const visit = (els: any[]) => {
+        for (const el of els) {
+          if (el.type === "text") {
+            collectFromDoc(el.content);
+          } else if (el.type === "table") {
+            const family = el.style?.fontFamily;
+            if (family) families.add(family);
+            for (const row of el.cells ?? []) for (const cell of row ?? []) {
+              collectFromDoc(cell.content, el.style?.fontFamily ?? "Inter");
+            }
+          } else if (el.type === "group") {
+            visit(el.children ?? []);
+          }
+        }
+      };
+      for (const slide of d.slides) visit(slide.elements);
       await Promise.all(Array.from(families).map((f) => ensureFontLoaded(f)));
       await Promise.all(
         Array.from(tuples).map((t) => {

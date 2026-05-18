@@ -62,6 +62,21 @@ export function App() {
         if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
         e.preventDefault();
         for (const id of selectedIds) removeElement(currentSlideId, id);
+      } else if (
+        (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") &&
+        selectedIds.length > 0 &&
+        currentSlideId &&
+        !inEditor
+      ) {
+        // Nudge selected elements. Shift makes a bigger step.
+        const step = e.shiftKey ? 10 : 1;
+        let dx = 0, dy = 0;
+        if (e.key === "ArrowLeft") dx = -step;
+        else if (e.key === "ArrowRight") dx = step;
+        else if (e.key === "ArrowUp") dy = -step;
+        else if (e.key === "ArrowDown") dy = step;
+        e.preventDefault();
+        useStore.getState().nudgeSelected(dx, dy);
       }
     };
     window.addEventListener("keydown", onKey);

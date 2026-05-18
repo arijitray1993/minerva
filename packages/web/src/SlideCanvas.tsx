@@ -182,12 +182,14 @@ export function SlideCanvas({ deck, slide }: Props) {
   // first paint and font-ready is as short as possible.
   useEffect(() => {
     const tuples = new Set<string>();
-    const collectFromDoc = (doc: any, baseFamily?: string, baseWeight?: number) => {
+    // Default base family matches DEFAULT_RUN_STYLE.fontFamily in layoutTextDoc
+    // so we pre-load the right weight even for runs that have no explicit
+    // textStyle.fontFamily mark (e.g. a bold mark in otherwise-plain text).
+    const collectFromDoc = (doc: any, baseFamily: string = "Inter", baseWeight: number = 400) => {
       if (!doc || typeof doc !== "object") return;
-      // For each text leaf, derive its effective (family, weight, italic) tuple.
       if (doc.type === "text" && typeof doc.text === "string") {
         let family = baseFamily;
-        let weight = baseWeight ?? 400;
+        let weight = baseWeight;
         let italic = false;
         for (const m of doc.marks ?? []) {
           if (m.type === "bold") weight = Math.max(weight, 700);
@@ -197,7 +199,7 @@ export function SlideCanvas({ deck, slide }: Props) {
             if (typeof m.attrs.fontWeight === "number") weight = m.attrs.fontWeight;
           }
         }
-        if (family) tuples.add(`${family}|${weight}|${italic ? "1" : "0"}`);
+        tuples.add(`${family}|${weight}|${italic ? "1" : "0"}`);
       }
       if (Array.isArray(doc.content)) for (const c of doc.content) collectFromDoc(c, baseFamily, baseWeight);
     };
@@ -252,13 +254,39 @@ export function SlideCanvas({ deck, slide }: Props) {
     // Cmd/Ctrl-drag from empty canvas (or stage background) starts a marquee.
     if (
       (e.evt.metaKey || e.evt.ctrlKey) &&
-      tool !== "curve" &&
+      tool === "select" &&
       (e.target === e.target.getStage() || e.target.getAttr("data-bg"))
     ) {
       const p = localPointer();
       if (p) {
         setMarquee({ start: p, current: p });
         setSelection([]);
+      }
+      return;
+    }
+    if (tool === "line" || tool === "arrow") {
+      const p = localPointer();
+      if (!p) return;
+      e.cancelBubble = true;
+      if (!drawProgress) {
+        setDrawProgress({ start: p, cursor: p });
+      } else {
+        // Second click finalizes the line/arrow.
+        const s = drawProgress.start;
+        const newEl = {
+          id: `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+          type: "shape" as const,
+          shapeKind: tool,
+          x: s.x,
+          y: s.y,
+          w: p.x - s.x,
+          h: p.y - s.y,
+          rotation: 0,
+          style: { stroke: "#333", strokeWidth: 2, opacity: 1 },
+        };
+        addElement(slide.id, newEl as any);
+        setDrawProgress(null);
+        setTool("select");
       }
       return;
     }
@@ -309,7 +337,7 @@ export function SlideCanvas({ deck, slide }: Props) {
       if (p) setMarquee({ ...marquee, current: p });
       return;
     }
-    if (tool !== "curve" || !drawProgress) return;
+    if (tool === "select" || !drawProgress) return;
     const p = localPointer();
     if (!p) return;
     setDrawProgress({ ...drawProgress, cursor: p });
@@ -334,7 +362,7 @@ export function SlideCanvas({ deck, slide }: Props) {
   }
 
   function onStageDblClick(e: Konva.KonvaEventObject<MouseEvent>) {
-    if (panMode || tool === "curve") return;
+    if (panMode || tool !== "select") return;
     const id = findElementIdFromTarget(e.target);
     if (!id) return;
     const el = slide.elements.find((x) => x.id === id);
@@ -357,7 +385,7 @@ export function SlideCanvas({ deck, slide }: Props) {
 
   function onStageContextMenu(e: Konva.KonvaEventObject<PointerEvent>) {
     e.evt.preventDefault();
-    if (tool === "curve") return;
+    if (tool !== "select") return;
     const elementId = findElementIdFromTarget(e.target);
     if (!elementId) {
       setContextMenu(null);
@@ -417,7 +445,7 @@ export function SlideCanvas({ deck, slide }: Props) {
   // Escape cancels in-flight drawing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && (drawProgress || tool === "curve")) {
+      if (e.key === "Escape" && (drawProgress || tool !== "select")) {
         setDrawProgress(null);
         setTool("select");
       }
@@ -488,7 +516,7 @@ export function SlideCanvas({ deck, slide }: Props) {
   };
 
   return (
-    <div ref={containerRef} className="canvas-area" style={{ cursor: panMode ? "grab" : tool === "curve" ? "crosshair" : formatToPaint ? "copy" : "default" }}>
+    <div ref={containerRef} className="canvas-area" style={{ cursor: panMode ? "grab" : tool !== "select" ? "crosshair" : formatToPaint ? "copy" : "default" }}>
       <Stage
         ref={stageRef}
         width={containerSize.w}
@@ -497,7 +525,7 @@ export function SlideCanvas({ deck, slide }: Props) {
         y={offset.y}
         scaleX={scale}
         scaleY={scale}
-        draggable={tool !== "curve" && !cmdHeld && !marquee}
+        draggable={tool === "select" && !cmdHeld && !marquee}
         onMouseDown={onStageMouseDown}
         onMouseMove={onStageMouseMove}
         onMouseUp={onStageMouseUp}
@@ -525,7 +553,7 @@ export function SlideCanvas({ deck, slide }: Props) {
             <RenderElement
               key={el.id}
               el={el}
-              pointerPaused={panMode || tool === "curve" || !!cropping || !!editingText}
+              pointerPaused={panMode || tool !== "select" || !!cropping || !!editingText}
               selected={selectedIds.includes(el.id)}
               groupDragActive={selectedIds.length > 1 && selectedIds.includes(el.id)}
               onDoubleClick={
@@ -958,6 +986,8 @@ function ShapeEl({ el, common }: { el: ShapeElementT; common: any }) {
         stroke={stroke ?? fill}
         fill={stroke ?? fill}
         strokeWidth={strokeWidth || 2}
+        // Generous invisible hit area so thin lines are easy to click on.
+        hitStrokeWidth={Math.max(24, (strokeWidth || 2) * 4)}
         opacity={opacity}
         pointerAtBeginning={arrowStart}
         pointerAtEnding={arrowEnd}
@@ -980,6 +1010,7 @@ function ShapeEl({ el, common }: { el: ShapeElementT; common: any }) {
         stroke={stroke ?? fill}
         fill={stroke ?? fill}
         strokeWidth={strokeWidth || 2}
+        hitStrokeWidth={Math.max(24, (strokeWidth || 2) * 4)}
         opacity={opacity}
         pointerAtBeginning={arrowStart}
         pointerAtEnding={arrowEnd}

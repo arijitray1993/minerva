@@ -356,7 +356,16 @@ function measureCtx(): CanvasRenderingContext2D {
 function fontString(s: RunStyle): string {
   const sizeAdj = s.superscript || s.subscript ? s.fontSize * 0.65 : s.fontSize;
   const italic = s.italic ? "italic " : "";
-  return `${italic}${s.fontWeight} ${sizeAdj}px "${s.fontFamily}"`;
+  // Build the family list the SAME way Konva does (just split/trim/join, no
+  // wrapping quotes). Wrapping the whole stack in quotes turns it into a
+  // single "Inter, system-ui, sans-serif" name and the browser can't find
+  // that font — it falls back to the default, and ctx.measureText returns
+  // fallback widths while Konva renders with the real font → overlap.
+  const family = s.fontFamily
+    .split(",")
+    .map((f) => f.trim())
+    .join(", ");
+  return `${italic}${s.fontWeight} ${sizeAdj}px ${family}`;
 }
 
 function measureWidth(text: string, s: RunStyle): number {

@@ -15,8 +15,9 @@ type State = {
   applyingRemote: boolean;
   /** Bumped after a web font finishes loading so the Konva canvas redraws with correct measurements. */
   fontRevision: number;
-  /** Active drawing tool; "select" is the default. */
-  tool: "select" | "curve";
+  /** Active drawing tool; "select" is the default. The line-like tools all
+   *  use a click-to-place flow on the canvas instead of inserting blindly. */
+  tool: "select" | "line" | "arrow" | "curve";
   /** When set, the next non-source selection will receive this element's formatting. */
   formatToPaint: { sourceId: string } | null;
   /** Set while the user is editing a text element inline. The inspector reads
@@ -40,10 +41,13 @@ type Actions = {
   setDeckTitle: (title: string) => void;
   setDeckSize: (w: number, h: number) => void;
   bumpFontRevision: () => void;
-  setTool: (tool: "select" | "curve") => void;
+  setTool: (tool: "select" | "line" | "arrow" | "curve") => void;
   setFormatToPaint: (v: { sourceId: string } | null) => void;
   applyFormatFromSource: (slideId: string, targetId: string) => void;
   setActiveTextEditor: (ed: Editor | null) => void;
+  /** Move every currently-selected (non-locked) element by (dx, dy) in slide
+   *  coords, batched into a single mutate so undo reverts the whole nudge. */
+  nudgeSelected: (dx: number, dy: number) => void;
 };
 
 export const useStore = create<State & Actions>((set, get) => ({
@@ -169,6 +173,21 @@ export const useStore = create<State & Actions>((set, get) => ({
   setTool: (tool) => set({ tool }),
   setFormatToPaint: (v) => set({ formatToPaint: v }),
   setActiveTextEditor: (ed) => set({ activeTextEditor: ed }),
+
+  nudgeSelected: (dx, dy) =>
+    mutate(set, get, (deck) => {
+      const { selectedIds, currentSlideId } = get();
+      if (!currentSlideId || selectedIds.length === 0) return;
+      const slide = deck.slides.find((s) => s.id === currentSlideId);
+      if (!slide) return;
+      for (const id of selectedIds) {
+        const idx = slide.elements.findIndex((e) => e.id === id);
+        if (idx < 0) continue;
+        const el = slide.elements[idx];
+        if (el.locked) continue;
+        slide.elements[idx] = { ...el, x: el.x + dx, y: el.y + dy } as ElementT;
+      }
+    }),
 
   applyFormatFromSource: (slideId, targetId) => {
     const s = get();

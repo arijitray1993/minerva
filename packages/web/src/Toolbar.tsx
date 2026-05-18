@@ -39,21 +39,24 @@ export function Toolbar() {
     addElement(currentSlideId, el);
   };
   const addShape = (kind: ShapeKind) => {
-    const isLine = kind === "line" || kind === "arrow";
+    setShapeMenuOpen(false);
+    // Line-like shapes use click-to-place on the canvas — the user clicks the
+    // start and end points (and a control point for curves). Inserting them
+    // at a fixed location made them invisibly tiny on a big poster.
+    if (kind === "line") { setTool("line"); return; }
+    if (kind === "arrow") { setTool("arrow"); return; }
+    if (kind === "curveQuad") { setTool("curve"); return; }
     const el: ElementT = {
       id: newId("shape"),
       type: "shape",
       shapeKind: kind,
       x: 200, y: 200,
-      w: isLine ? 300 : 200,
-      h: isLine ? 1 : 160,
+      w: 200,
+      h: 160,
       rotation: 0,
-      style: isLine
-        ? { stroke: "#333", strokeWidth: 2, opacity: 1 }
-        : { fill: "#bdd6f7", stroke: "#3b6ea8", strokeWidth: 1, opacity: 1 },
+      style: { fill: "#bdd6f7", stroke: "#3b6ea8", strokeWidth: 1, opacity: 1 },
     };
     addElement(currentSlideId, el);
-    setShapeMenuOpen(false);
   };
   const addTable = () => {
     addElement(currentSlideId, newTable(3, 3));
@@ -120,13 +123,17 @@ export function Toolbar() {
       </div>
       <button onClick={addImage}>+ Image</button>
       <button onClick={addTable}>+ Table</button>
-      <button
-        onClick={() => setTool(tool === "curve" ? "select" : "curve")}
-        className={tool === "curve" ? "active" : ""}
-        title="Draw a curved line — click start, click control, click end"
-      >
-        {tool === "curve" ? "✏︎ drawing curve…" : "+ Curve"}
-      </button>
+      {tool !== "select" && (
+        <button
+          onClick={() => setTool("select")}
+          className="active"
+          title="Cancel drawing tool"
+        >
+          {tool === "line" ? "✏︎ drawing line — click start, click end (Esc to cancel)" :
+           tool === "arrow" ? "✏︎ drawing arrow — click start, click end (Esc to cancel)" :
+           "✏︎ drawing curve — click start, click control, click end (Esc to cancel)"}
+        </button>
+      )}
       <span className="sep" />
       <button
         onClick={() => {
