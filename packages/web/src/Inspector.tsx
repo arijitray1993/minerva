@@ -371,63 +371,62 @@ function TextStyleSection({ el, patch }: { el: TextElementT; patch: (p: Partial<
         </div>
       )}
       {!activeTextEditor && (
-        <textarea
-          style={{ width: "100%", minHeight: 60, background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4, padding: 6, fontSize: 12 }}
-          value={plainText(el.content)}
-          onChange={(e) => patch({ content: setTextPreservingStyle(el.content, e.target.value) } as any)}
-        />
+        <>
+          <textarea
+            style={{ width: "100%", minHeight: 60, background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4, padding: 6, fontSize: 12 }}
+            value={plainText(el.content)}
+            onChange={(e) => patch({ content: setTextPreservingStyle(el.content, e.target.value) } as any)}
+          />
+          <div className="row">
+            <label>font</label>
+            <select value={fontFamily} onChange={(e) => styleSet({ fontFamily: e.target.value })}>
+              {GOOGLE_FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+          <div className="row">
+            <label>size</label>
+            <input type="number" min={6} max={300} value={fontSize} onChange={(e) => styleSet({ fontSize: +e.target.value })} />
+          </div>
+          <div className="row">
+            <label>color</label>
+            <input type="color" value={color} onChange={(e) => styleSet({ color: e.target.value })} />
+          </div>
+          <div className="button-group">
+            <button className={hasMarkAll(el.content, "bold") ? "active" : ""} onClick={() => toggle("bold")} style={{ fontWeight: 700 }}>B</button>
+            <button className={hasMarkAll(el.content, "italic") ? "active" : ""} onClick={() => toggle("italic")} style={{ fontStyle: "italic" }}>I</button>
+            <button className={hasMarkAll(el.content, "underline") ? "active" : ""} onClick={() => toggle("underline")} style={{ textDecoration: "underline" }}>U</button>
+            <button className={hasMarkAll(el.content, "strike") ? "active" : ""} onClick={() => toggle("strike")} style={{ textDecoration: "line-through" }}>S</button>
+          </div>
+          <div className="button-group">
+            <button className={hasMarkAll(el.content, "superscript") ? "active" : ""} onClick={() => toggle("superscript")}>x²</button>
+            <button className={hasMarkAll(el.content, "subscript") ? "active" : ""} onClick={() => toggle("subscript")}>x₂</button>
+          </div>
+          <div className="row">
+            <label>highlight</label>
+            <input
+              type="color"
+              value={highlightColor ?? "#fff59d"}
+              onChange={(e) => patch({ content: setHighlightAll(el.content, e.target.value) } as any)}
+            />
+            <button
+              style={{ background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4, padding: "4px 8px", cursor: "pointer", fontSize: 11 }}
+              onClick={() => patch({ content: setHighlightAll(el.content, null) } as any)}
+            >clear</button>
+          </div>
+          <div className="row">
+            <label>align</label>
+            <select
+              value={el.style?.align ?? "left"}
+              onChange={(e) => patch({ style: { ...(el.style ?? {}), align: e.target.value as any } } as any)}
+            >
+              <option value="left">left</option>
+              <option value="center">center</option>
+              <option value="right">right</option>
+              <option value="justify">justify</option>
+            </select>
+          </div>
+        </>
       )}
-
-      <div className="row">
-        <label>font</label>
-        <select value={fontFamily} onChange={(e) => styleSet({ fontFamily: e.target.value })}>
-          {GOOGLE_FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
-        </select>
-      </div>
-      <div className="row">
-        <label>size</label>
-        <input type="number" min={6} max={300} value={fontSize} onChange={(e) => styleSet({ fontSize: +e.target.value })} />
-      </div>
-      <div className="row">
-        <label>color</label>
-        <input type="color" value={color} onChange={(e) => styleSet({ color: e.target.value })} />
-      </div>
-
-      <div className="button-group">
-        <button className={hasMarkAll(el.content, "bold") ? "active" : ""} onClick={() => toggle("bold")} style={{ fontWeight: 700 }}>B</button>
-        <button className={hasMarkAll(el.content, "italic") ? "active" : ""} onClick={() => toggle("italic")} style={{ fontStyle: "italic" }}>I</button>
-        <button className={hasMarkAll(el.content, "underline") ? "active" : ""} onClick={() => toggle("underline")} style={{ textDecoration: "underline" }}>U</button>
-        <button className={hasMarkAll(el.content, "strike") ? "active" : ""} onClick={() => toggle("strike")} style={{ textDecoration: "line-through" }}>S</button>
-      </div>
-      <div className="button-group">
-        <button className={hasMarkAll(el.content, "superscript") ? "active" : ""} onClick={() => toggle("superscript")}>x²</button>
-        <button className={hasMarkAll(el.content, "subscript") ? "active" : ""} onClick={() => toggle("subscript")}>x₂</button>
-      </div>
-      <div className="row">
-        <label>highlight</label>
-        <input
-          type="color"
-          value={highlightColor ?? "#fff59d"}
-          onChange={(e) => patch({ content: setHighlightAll(el.content, e.target.value) } as any)}
-        />
-        <button
-          style={{ background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4, padding: "4px 8px", cursor: "pointer", fontSize: 11 }}
-          onClick={() => patch({ content: setHighlightAll(el.content, null) } as any)}
-        >clear</button>
-      </div>
-
-      <div className="row">
-        <label>align</label>
-        <select
-          value={el.style?.align ?? "left"}
-          onChange={(e) => patch({ style: { ...(el.style ?? {}), align: e.target.value as any } } as any)}
-        >
-          <option value="left">left</option>
-          <option value="center">center</option>
-          <option value="right">right</option>
-          <option value="justify">justify</option>
-        </select>
-      </div>
     </>
   );
 }

@@ -9,7 +9,7 @@ import { Superscript } from "@tiptap/extension-superscript";
 import { Subscript } from "@tiptap/extension-subscript";
 import type { TextElementT } from "@minerva/schema";
 import { useStore } from "./store";
-import { firstTextStyle, ensureFontLoaded } from "./text";
+import { firstTextStyle, ensureFontLoaded, GOOGLE_FONTS } from "./text";
 
 type Props = {
   el: TextElementT;
@@ -193,6 +193,10 @@ export function TextEditToolbar({ editor }: { editor: Editor }) {
   const currentColor = editor.getAttributes("textStyle").color || "#111111";
   const currentHighlight = editor.getAttributes("highlight").color || "#ffff00";
   const currentSize = editor.getAttributes("textStyle").fontSize ?? editor.getAttributes("fontSize")?.fontSize ?? "";
+  const currentFamily =
+    editor.getAttributes("textStyle").fontFamily ??
+    editor.getAttributes("fontFamily")?.fontFamily ??
+    "";
 
   return (
     <div className="text-edit-toolbar-inner">
@@ -243,6 +247,23 @@ export function TextEditToolbar({ editor }: { editor: Editor }) {
         onMouseDown={(e) => e.stopPropagation()}
         style={{ width: 52 }}
       />
+      <select
+        value={currentFamily}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (!v) return;
+          ensureFontLoaded(v);
+          (editor.chain().focus() as any).setFontFamily(v).run();
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{ maxWidth: 110 }}
+        title="font family"
+      >
+        <option value="">font…</option>
+        {GOOGLE_FONTS.map((f) => (
+          <option key={f} value={f}>{f}</option>
+        ))}
+      </select>
     </div>
   );
 }
