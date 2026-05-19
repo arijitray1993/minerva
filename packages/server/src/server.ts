@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from "express";
 import { createServer } from "node:http";
+import net from "node:net";
 import { WebSocketServer, WebSocket } from "ws";
 import chokidar from "chokidar";
 import { createHash } from "node:crypto";
@@ -10,9 +11,41 @@ import multer from "multer";
 import { Deck, Comments } from "@minerva/schema";
 import { exportDeckPdf, renderSlidePng } from "./pdf.js";
 
-type ServerOptions = { root: string; port: number };
+/**
+ * Find the first port at or after `start` that nothing is currently bound to.
+ * Used so two decks can run side-by-side without the second one failing on
+ * EADDRINUSE — the second instance just walks past 5174 to 5175, etc.
+ */
+export async function findFreePort(start: number, maxTries = 50): Promise<number> {
+  // Bind without a host so the probe matches http.listen()'s default
+  // (dual-stack on Node). Probing only 127.0.0.1 here gives false positives
+  // when another process is bound to :: on the same port.
+  for (let p = start; p < start + maxTries; p++) {
+    const free = await new Promise<boolean>((resolve) => {
+      const srv = net.createServer();
+      srv.once("error", () => resolve(false));
+      srv.once("listening", () => srv.close(() => resolve(true)));
+      srv.listen(p);
+    });
+    if (free) return p;
+  }
+  throw new Error(`no free port found in [${start}, ${start + maxTries})`);
+}
 
-export async function startServer({ root, port }: ServerOptions) {
+type ServerOptions = {
+  root: string;
+  /** Port to listen on. If `strictPort` is false (the default), this is just
+   *  the starting point — the server walks forward until it finds a free port. */
+  port: number;
+  /** If true, fail rather than walk forward. Used when the user passed --port. */
+  strictPort?: boolean;
+};
+
+export async function startServer({ root, port, strictPort = false }: ServerOptions): Promise<number> {
+  // Resolve the actual port up front so route handlers (PDF, PNG render) can
+  // capture it in their closures and use the same baseUrl the browser uses.
+  const chosenPort = strictPort ? port : await findFreePort(port);
+
   const deckPath = join(root, "deck.json");
   const commentsPath = join(root, "comments.json");
   const assetsDir = join(root, "assets");
@@ -99,7 +132,7 @@ export async function startServer({ root, port }: ServerOptions) {
       const raw = await readFile(deckPath, "utf8");
       const deck = Deck.parse(JSON.parse(raw));
       const pdf = await exportDeckPdf({
-        baseUrl: `http://localhost:${port}`,
+        baseUrl: `http://localhost:${chosenPort}`,
         deckSize: deck.size,
       });
       res.setHeader("Content-Type", "application/pdf");
@@ -122,7 +155,7 @@ export async function startServer({ root, port }: ServerOptions) {
         return;
       }
       const png = await renderSlidePng({
-        baseUrl: `http://localhost:${port}`,
+        baseUrl: `http://localhost:${chosenPort}`,
         deckSize: deck.size,
         slideId,
       });
@@ -192,9 +225,25 @@ export async function startServer({ root, port }: ServerOptions) {
     }
   });
 
-  await new Promise<void>((r) => http.listen(port, r));
+  await new Promise<void>((r) => http.listen(chosenPort, r));
+
+  // Drop a tiny pid+port record so `minerva render` (or any other tool) can
+  // find this server without having to be told the port. Best-effort only.
+  try {
+    const minervaDir = join(root, ".minerva");
+    await mkdir(minervaDir, { recursive: true });
+    await writeFile(
+      join(minervaDir, "server.json"),
+      JSON.stringify({ port: chosenPort, pid: process.pid, startedAt: new Date().toISOString() }, null, 2),
+      "utf8"
+    );
+  } catch {
+    /* not fatal — render will fall back to the default port */
+  }
+
   console.log(`minerva: editing ${deckPath}`);
-  console.log(`minerva: open http://localhost:${port}`);
+  console.log(`minerva: open http://localhost:${chosenPort}`);
+  return chosenPort;
 }
 
 function extOfMime(mime: string): string | undefined {

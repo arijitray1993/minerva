@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# minerva — clone-and-go entrypoint.
+#
+# Usage:
+#   ./minerva                         # default: start the editor (deck lives at the repo root)
+#   ./minerva render slide-1          # forwards to the CLI (any subcommand works)
+#   ./minerva start ../my-other-deck  # explicit deck dir
+#
+# First invocation installs dependencies and builds the workspaces. Subsequent
+# runs skip both. After a `git pull` that touched packages/, run:
+#   npm run build:workspaces
+# (or `rm -rf packages/*/dist` and re-run this script).
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+# --- node check -------------------------------------------------------------
+if ! command -v node >/dev/null 2>&1; then
+  echo "minerva: node not found. install Node 18+ from https://nodejs.org/" >&2
+  exit 1
+fi
+NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
+if [ "$NODE_MAJOR" -lt 18 ]; then
+  echo "minerva: node $NODE_MAJOR found, need 18+." >&2
+  exit 1
+fi
+
+# --- install deps if needed -------------------------------------------------
+if [ ! -d node_modules ]; then
+  echo "minerva: installing dependencies (one-time)..."
+  npm install --silent
+fi
+
+# --- build if needed --------------------------------------------------------
+if [ ! -f packages/web/dist/index.html ] || [ ! -f packages/server/dist/cli.js ]; then
+  echo "minerva: building (one-time)..."
+  npm run build:workspaces --silent
+fi
+
+# --- dispatch ---------------------------------------------------------------
+CLI="$ROOT/packages/server/dist/cli.js"
+if [ $# -eq 0 ]; then
+  # Bare invocation: scaffold (if needed) + start, deck at the repo root.
+  exec node "$CLI" start "$ROOT"
+else
+  # Anything else: forward verbatim. So ./minerva render slide-1, ./minerva
+  # init, ./minerva start ../other-dir all work.
+  exec node "$CLI" "$@"
+fi

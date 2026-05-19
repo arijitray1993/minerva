@@ -67,8 +67,16 @@ function cmdInit(dir: string, opts: InitOptions = {}) {
 function claudeInstructions(): string {
   return `# Minerva deck — guide for Claude
 
-This folder holds a Minerva slide deck. Slides live in \`deck.json\`, validated by a
-Zod schema. Images are in \`assets/\`. Human feedback arrives in \`comments.json\`.
+You are running inside a Minerva project folder (cloned from
+github.com/arijitray1993/minerva). The slide deck lives at the repo root:
+
+- \`deck.json\` — slide content, validated against a Zod schema
+- \`assets/\` — images referenced by the deck
+- \`comments.json\` — human feedback addressed to you
+
+The editor's source code is in this same folder under \`packages/\`,
+\`scripts/\`, \`node_modules/\`, etc. **Those are off-limits to you.** Only
+\`deck.json\`, \`assets/\`, and \`comments.json\` are your domain.
 
 ## Ground rule — use the editor, don't reinvent it
 
@@ -77,30 +85,33 @@ look. A handwritten HTML preview will measure text differently, fall back to
 different fonts, and lie to you about layout. **Do not build your own renderer**
 under any circumstances.
 
-Concretely, this means:
+Concretely:
 
-- **Do not create \`*.html\`, \`*.htm\`, \`*.css\`, \`*.svg\`, or any "preview" /
-  "mockup" / "render" file in this folder.** The PNG written by \`minerva render\`
-  is the only acceptable preview.
+- **Do not create new \`*.html\`, \`*.htm\`, \`*.css\`, \`*.svg\` files at the repo
+  root, or any "preview" / "mockup" / "render" file anywhere.** The PNG written
+  by \`./minerva render\` is the only acceptable preview. (The HTML/CSS files
+  that already live inside \`packages/web/\` are the editor itself — don't touch
+  them either.)
 - **Do not invent new element \`type\`s or \`shapeKind\`s.** The schema's whitelist
   (below) is exhaustive. If a shape isn't listed, compose it from the ones that
   are, or render it as text.
-- **Do not modify any file outside this deck folder.** The renderer lives in the
-  installed \`minerva-slides\` package, not here. Tuning it to match your mental
-  model breaks the human's live view.
+- **Do not modify \`packages/\`, \`scripts/\`, \`node_modules/\`, build outputs
+  (\`dist/\`, \`web-dist/\`), or any config file (\`package.json\`, \`tsconfig*\`,
+  \`vite.config.*\`).** Tuning the renderer to match your mental model breaks the
+  human's live view.
 
 ## Your render loop
 
 After any visible change to \`deck.json\`:
 
 \`\`\`
-minerva render <slide-id>          # writes .minerva/preview-<slide-id>.png
-minerva render all                 # all slides
+./minerva render <slide-id>        # writes .minerva/preview-<slide-id>.png
+./minerva render all               # all slides
 \`\`\`
 
 Then **open the PNG with your Read tool** and iterate against that image. This is
-your visual feedback loop. \`minerva serve\` (or \`minerva start\`) must be running
-in this folder for renders to succeed.
+your visual feedback loop. The editor server (started by \`./minerva\`) must be
+running for renders to succeed.
 
 ## Comments from the human (read these first, every session)
 
@@ -218,7 +229,7 @@ drop the file into \`assets/\` and reference it.
 ## The "definition of done" for any visual change
 
 1. Edit \`deck.json\`.
-2. Run \`minerva render <slide-id>\`.
+2. Run \`./minerva render <slide-id>\`.
 3. Read the PNG.
 4. If it doesn't match the human's request, revise and repeat.
 
@@ -226,19 +237,19 @@ Don't claim a change is done before step 3.
 `;
 }
 
-async function cmdServe(dir: string, port: number, openBrowser: boolean) {
+async function cmdServe(dir: string, port: number, strictPort: boolean, openBrowser: boolean) {
   const root = resolve(dir);
   if (!existsSync(join(root, "deck.json"))) {
     console.error(`no deck.json found in ${root}. run 'minerva init' or 'minerva start' first.`);
     process.exit(1);
   }
-  await startServer({ root, port });
-  if (openBrowser) await openInBrowser(`http://localhost:${port}`);
+  const chosenPort = await startServer({ root, port, strictPort });
+  if (openBrowser) await openInBrowser(`http://localhost:${chosenPort}`);
 }
 
-async function cmdStart(dir: string, port: number, openBrowser: boolean) {
+async function cmdStart(dir: string, port: number, strictPort: boolean, openBrowser: boolean) {
   cmdInit(dir, { idempotent: true, refreshGuide: true });
-  await cmdServe(dir, port, openBrowser);
+  await cmdServe(dir, port, strictPort, openBrowser);
 }
 
 async function openInBrowser(url: string) {
@@ -250,13 +261,29 @@ async function openInBrowser(url: string) {
   }
 }
 
-async function cmdRender(target: string, dir: string, port: number, outOverride: string | null) {
+/**
+ * Look up the port the running server is on, by reading the breadcrumb file it
+ * writes to .minerva/server.json. Returns null if the file is absent or stale.
+ */
+function readServerPort(root: string): number | null {
+  const p = join(root, ".minerva", "server.json");
+  if (!existsSync(p)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(p, "utf8"));
+    return typeof raw.port === "number" ? raw.port : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cmdRender(target: string, dir: string, portArg: number | null, outOverride: string | null) {
   const root = resolve(dir);
   const deckPath = join(root, "deck.json");
   if (!existsSync(deckPath)) {
     console.error(`no deck.json found in ${root}`);
     process.exit(1);
   }
+  const port = portArg ?? readServerPort(root) ?? 5174;
   const deck = Deck.parse(JSON.parse(readFileSync(deckPath, "utf8")));
   const slideIds =
     target === "all"
@@ -275,11 +302,13 @@ async function cmdRender(target: string, dir: string, port: number, outOverride:
 
   for (const id of slideIds) {
     const url = `http://localhost:${port}/api/render/png?slide=${encodeURIComponent(id)}`;
-    const res = await fetch(url);
+    const res = await fetch(url).catch((e: unknown) => {
+      throw new Error(`could not reach minerva server on port ${port} — is it running? (${(e as Error).message})`);
+    });
     if (!res.ok) {
       const body = await res.text();
       console.error(`render failed for "${id}" (${res.status}): ${body}`);
-      console.error(`is 'minerva serve' running on port ${port}?`);
+      console.error(`is the minerva server running on port ${port}?`);
       process.exit(1);
     }
     const buf = Buffer.from(await res.arrayBuffer());
@@ -292,20 +321,23 @@ async function cmdRender(target: string, dir: string, port: number, outOverride:
   }
 }
 
-type ServeArgs = { dir: string; port: number; openBrowser: boolean };
+type ServeArgs = { dir: string; port: number; strictPort: boolean; openBrowser: boolean };
 
 function parseServeArgs(argv: string[], from: number): ServeArgs {
   let port = 5174;
+  let strictPort = false;
   let dir = ".";
   let openBrowser = true;
   for (let i = from; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--port") port = parseInt(argv[++i] ?? "5174", 10);
-    else if (a === "--no-open") openBrowser = false;
+    if (a === "--port") {
+      port = parseInt(argv[++i] ?? "5174", 10);
+      strictPort = true;
+    } else if (a === "--no-open") openBrowser = false;
     else if (a === "--open") openBrowser = true;
     else if (!a.startsWith("--")) dir = a;
   }
-  return { dir, port, openBrowser };
+  return { dir, port, strictPort, openBrowser };
 }
 
 async function main() {
@@ -318,17 +350,17 @@ async function main() {
     return;
   }
   if (cmd === "serve") {
-    const { dir, port, openBrowser } = parseServeArgs(argv, 1);
-    await cmdServe(dir, port, openBrowser);
+    const { dir, port, strictPort, openBrowser } = parseServeArgs(argv, 1);
+    await cmdServe(dir, port, strictPort, openBrowser);
     return;
   }
   if (cmd === "start") {
-    const { dir, port, openBrowser } = parseServeArgs(argv, 1);
-    await cmdStart(dir, port, openBrowser);
+    const { dir, port, strictPort, openBrowser } = parseServeArgs(argv, 1);
+    await cmdStart(dir, port, strictPort, openBrowser);
     return;
   }
   if (cmd === "render") {
-    let port = 5174;
+    let port: number | null = null;
     let dir = ".";
     let out: string | null = null;
     let target: string | null = null;
