@@ -1,15 +1,10 @@
-# Minerva
+# Minerva: Human-`agent` Collaborative Slides
 
-**A Google Slides-like editor that humans and Claude edit together.**
+<p align="center">
+  <img src="Minerva_teaser.svg" alt="" width="820">
+</p>
 
 Slides live as a portable JSON file (`deck.json`) in a project folder. Humans drag, type, and style in a WYSIWYG canvas. Claude Code, running in the same folder, edits the same file — and uses the editor's renderer (not its own HTML mock-up) as ground truth for what the slide actually looks like.
-
-```
-  ┌──────────────┐         deck.json         ┌──────────────┐
-  │  Browser UI  │  ←──────  watch + ws ─────→  │  Claude Code │
-  │  (Konva)     │                              │  in terminal │
-  └──────────────┘                              └──────────────┘
-```
 
 ## One-line setup
 

@@ -20,7 +20,8 @@
     "dist",
     "web-dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "Minerva_teaser.svg"
   ],
   "engines": {
     "node": ">=18"
