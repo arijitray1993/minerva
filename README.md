@@ -72,15 +72,13 @@ Both servers know their own port via `.minerva/server.json`, so Claude's `./mine
 
 ## Quick How-To's
 
-### Right click to leave a comment for claude
+**Right click to leave a comment for claude**
 
+Simply select elements and right click to leave a comment for claude to work on. 
 
+**Use template skills** 
 
-### Use template skills 
-
-**CVPR 2026 Poster skill**
-
-Simply ask Claude to look at `templates/CVPR26_POSTER_SKILL.md`. 
+- CVPR 2026 Poster skill: Simply ask Claude to look at `templates/CVPR26_POSTER_SKILL.md`. 
 
 More coming soon...
 
