@@ -4,15 +4,16 @@
   <img src="Minerva_teaser.svg" alt="" width="820">
 </p>
 
-Slides live as a portable JSON file (`deck.json`) inside a Minerva project. Humans drag, type, and style in a WYSIWYG canvas. Claude Code, running in the same folder, edits the same file — and uses the editor's renderer as ground truth for what the slide actually looks like, not a hallucinated HTML mock-up.
+Slides live as a portable JSON file (`deck.json`) inside a Minerva project. Humans drag, type, and style in a WYSIWYG canvas. Claude Code, running in the same folder, edits the same file.
+
 
 ## Setup
 
 Clone the repo, then pick whichever flow fits how you work. The first run installs dependencies and builds (~30s); after that, `./minerva` is instant.
 
 ```bash
-git clone https://github.com/arijitray1993/minerva.git my-deck
-cd my-deck
+git clone https://github.com/arijitray1993/minerva.git my-slides
+cd my-slides
 ```
 
 ### A. Paste into Claude Code (recommended)
@@ -25,7 +26,8 @@ claude
 > Run `./minerva` in the background, then read MINERVA.md and follow it.
 ```
 
-Claude starts the server, opens the editor in your browser, reads the `MINERVA.md` guide that gets scaffolded next to your deck, and waits for your next request.
+Claude starts the server, opens the editor in your browser.
+
 
 ### B. Run it yourself, then open Claude
 
@@ -68,15 +70,20 @@ Both servers know their own port via `.minerva/server.json`, so Claude's `./mine
 - **One file is the whole deck.** `deck.json` is portable. Diff it, commit it, copy it between machines. No database, no SaaS account, no lock-in.
 - **PDF export that looks like the canvas.** Playwright drives the same `/print` route to produce a faithful, slide-only PDF.
 
-## How the human ↔ Claude loop works
+## Quick How-To's
 
-1. You select something in the editor, right-click, and pick **"Leave Claude comment…"**.
-2. The editor writes an entry to `comments.json` with the slide id, the selected element ids, and your request.
-3. Claude reads `comments.json` (the rules in `MINERVA.md` tell it to read this on every session) and finds those elements in `deck.json` by id.
-4. Claude edits `deck.json`. The editor live-reloads via WebSocket so you see the change instantly.
-5. Claude runs `./minerva render <slide-id>` to write a PNG to `.minerva/`, opens the PNG, and verifies the result before marking the comment resolved.
+### Right click to leave a comment for claude
 
-The visual feedback loop is the important part. Claude is **explicitly told not to invent its own HTML/CSS preview** — those would measure text differently, fall back to different fonts, and lie about layout. The only acceptable preview is the PNG rendered by the actual editor.
+
+
+### Use template skills 
+
+**CVPR 2026 Poster skill**
+
+Simply ask Claude to look at `templates/CVPR26_POSTER_SKILL.md`. 
+
+More coming soon...
+
 
 ## Requirements
 

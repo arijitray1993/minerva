@@ -5,6 +5,7 @@ import { SlideCanvas } from "./SlideCanvas";
 import { Inspector } from "./Inspector";
 import { SlidesSidebar } from "./SlidesSidebar";
 import { Toolbar } from "./Toolbar";
+import { BottomPanel } from "./BottomPanel";
 import type { ElementT } from "@minerva/schema";
 
 /** Deep-clone an element, recursively assigning fresh IDs (the top-level id
@@ -313,6 +314,7 @@ export function App() {
       <SlidesSidebar />
       {slide ? <SlideCanvas deck={deck} slide={slide} /> : <div className="canvas-area" />}
       <Inspector />
+      <BottomPanel />
     </div>
   );
 }

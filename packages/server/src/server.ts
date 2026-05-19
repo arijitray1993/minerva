@@ -8,8 +8,29 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import multer from "multer";
+import { chmodSync } from "node:fs";
+import { createRequire } from "node:module";
+import * as nodePty from "node-pty";
 import { Deck, Comments } from "@minerva/schema";
 import { exportDeckPdf, renderSlidePng } from "./pdf.js";
+
+/** node-pty 1.x ships a `spawn-helper` binary that npm sometimes extracts
+ *  without the executable bit on macOS, which makes `posix_spawnp failed` on
+ *  the first `pty.spawn`. Re-chmod it ourselves so a fresh clone-install just
+ *  works without "now also run chmod ...". Idempotent and silent if missing. */
+function ensurePtyHelperExecutable() {
+  try {
+    // Resolve relative to node-pty's package.json so monorepo hoisting and
+    // global installs both land us in the right tree. We're in ESM so we
+    // synthesize a require to use require.resolve.
+    const req = createRequire(import.meta.url);
+    const ptyPkg = req.resolve("node-pty/package.json");
+    const ptyDir = ptyPkg.replace(/\/package\.json$/, "");
+    for (const arch of ["darwin-arm64", "darwin-x64"]) {
+      try { chmodSync(`${ptyDir}/prebuilds/${arch}/spawn-helper`, 0o755); } catch { /* not present on this platform */ }
+    }
+  } catch { /* node-pty not installed for some reason — terminal will be disabled */ }
+}
 
 /**
  * Find the first port at or after `start` that nothing is currently bound to.
@@ -42,6 +63,7 @@ type ServerOptions = {
 };
 
 export async function startServer({ root, port, strictPort = false }: ServerOptions): Promise<number> {
+  ensurePtyHelperExecutable();
   // Resolve the actual port up front so route handlers (PDF, PNG render) can
   // capture it in their closures and use the same baseUrl the browser uses.
   const chosenPort = strictPort ? port : await findFreePort(port);
@@ -191,8 +213,23 @@ export async function startServer({ root, port, strictPort = false }: ServerOpti
   }
 
   // --- HTTP + WebSocket -------------------------------------------------------
+  // Two WS endpoints share the same HTTP server: /ws for deck/comment broadcasts
+  // and /term for the embedded pty. The `ws` library only lets one
+  // WebSocketServer auto-claim upgrades from a given HTTP server, so we use
+  // noServer:true on both and route upgrades manually by request URL.
   const http = createServer(app);
-  const wss = new WebSocketServer({ server: http, path: "/ws" });
+  const wss = new WebSocketServer({ noServer: true });
+  const termWss = new WebSocketServer({ noServer: true });
+  http.on("upgrade", (req, socket, head) => {
+    const url = req.url ?? "";
+    if (url === "/ws" || url.startsWith("/ws?")) {
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+    } else if (url === "/term" || url.startsWith("/term?")) {
+      termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit("connection", ws, req));
+    } else {
+      socket.destroy();
+    }
+  });
   const clients = new Set<WebSocket>();
 
   wss.on("connection", (ws) => {
@@ -206,6 +243,57 @@ export async function startServer({ root, port, strictPort = false }: ServerOpti
       if (ws.readyState === ws.OPEN) ws.send(s);
     }
   }
+
+  // --- Terminal WebSocket ----------------------------------------------------
+  // Embedded shell so the user doesn't have to alt-tab to a real terminal to
+  // run `claude`. Each connection spawns its own pty rooted in the deck folder.
+  // Protocol:
+  //   server → client: raw bytes from the pty (sent as a binary frame so we
+  //     don't have to escape anything).
+  //   client → server: JSON frames {kind:"data", data: string}
+  //                                {kind:"resize", cols, rows}
+  // Routed by the shared upgrade dispatcher above (noServer:true).
+  termWss.on("connection", (ws) => {
+    const shell = process.env.SHELL || "/bin/bash";
+    let pty: nodePty.IPty;
+    try {
+      pty = nodePty.spawn(shell, ["-l"], {
+        name: "xterm-256color",
+        cols: 100,
+        rows: 30,
+        cwd: root,
+        // Pass the live env so the user's PATH / aliases / Claude API key are
+        // there. We deliberately don't sanitize — same trust model as a local
+        // shell.
+        env: process.env as { [k: string]: string },
+      });
+    } catch (err) {
+      ws.send(`failed to spawn shell: ${(err as Error).message}\r\n`);
+      ws.close();
+      return;
+    }
+    pty.onData((data) => {
+      if (ws.readyState === ws.OPEN) ws.send(data);
+    });
+    pty.onExit(({ exitCode }) => {
+      try { ws.send(`\r\n[shell exited with code ${exitCode}]\r\n`); } catch { /* ws may already be closing */ }
+      try { ws.close(); } catch { /* ignore */ }
+    });
+    ws.on("message", (raw) => {
+      // Frames arrive as Buffer; parse as JSON. Anything that doesn't parse
+      // is treated as a stray byte and ignored.
+      let msg: { kind?: string; data?: string; cols?: number; rows?: number };
+      try { msg = JSON.parse(raw.toString()); } catch { return; }
+      if (msg.kind === "data" && typeof msg.data === "string") {
+        pty.write(msg.data);
+      } else if (msg.kind === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+        try { pty.resize(Math.max(1, msg.cols | 0), Math.max(1, msg.rows | 0)); } catch { /* invalid sizes are non-fatal */ }
+      }
+    });
+    ws.on("close", () => {
+      try { pty.kill(); } catch { /* already dead */ }
+    });
+  });
 
   // --- Watch files for external (e.g. Claude) edits --------------------------
   let lastCommentsHash = "";
