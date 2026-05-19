@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+title: "Minerva: a JSON-backed slide editor for human + Claude collaboration"
+message: "If you use Minerva in academic work, please cite it as below."
+type: software
+authors:
+  - family-names: Ray
+    given-names: Arijit
+repository-code: "https://github.com/arijitray1993/minerva"
+url: "https://github.com/arijitray1993/minerva"
+abstract: >
+  Minerva is a Google-Slides-like editor where humans and Claude collaborate
+  on the same portable JSON deck file. The editor's Konva-based renderer is
+  the single source of truth for layout; Claude edits deck.json directly and
+  uses the editor's PNG/PDF export to see what it produced.
+license: MIT
+year: 2026

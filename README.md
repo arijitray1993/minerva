@@ -6,6 +6,9 @@
 
 Slides live as a portable JSON file (`deck.json`) inside a Minerva project. Humans drag, type, and style in a WYSIWYG canvas. Claude Code, running in the same folder, edits the same file.
 
+## 💥 News 
+
+- **[2026-05-19]** Initial release of Minerva! Try it out and let us know any issues or feature requests. Open issues and we will fix them asap.  
 
 ## Setup
 
@@ -82,6 +85,18 @@ Simply select elements and right click to leave a comment for claude to work on.
 
 More coming soon...
 
+**Quick shortcuts**
+
+- **Select multiple items**: Cmd/Ctrl + click and drag a marquee, or Shift + click to add/remove from the current selection.
+- **Move canvas**: Hold Space, then click-and-drag anywhere.
+- **Zoom in/out**: Cmd/Ctrl + scroll wheel zooms toward the cursor. Cmd/Ctrl + `=` / `-` zoom from the center, Cmd/Ctrl + `0` resets to fit.
+- **Move elements**: Drag with the mouse, or select and use arrow keys (1 px; Shift + arrow = 10 px).
+- **Crop images**: Double-click an image to enter crop mode; drag the handles, Esc (or click outside) to exit.
+- **Edit text inline**: Double-click a text element to type/format directly on the canvas.
+- **Copy / paste**: Cmd/Ctrl + C, Cmd/Ctrl + V — duplicates with a small offset. Works across element types.
+- **Delete**: Select + Delete/Backspace.
+- **Undo / redo**: Cmd/Ctrl + Z, Cmd/Ctrl + Shift + Z.
+
 
 ## Requirements
 
@@ -118,6 +133,25 @@ First invocation runs `npm install` + `npm run build:workspaces`. After a `git p
 - `minerva` — the shell entrypoint described above.
 - `scripts/build-publish.mjs` — kept for a future npm publish; not used in the github-install flow.
 
+## Citation
+
+If you use Minerva in academic work, please cite it. GitHub renders the
+machine-readable [`CITATION.cff`](CITATION.cff) at the repo root as a
+"Cite this repository" button at the top-right of the project page. For
+BibTeX:
+
+```bibtex
+@software{ray2026minerva,
+  author  = {Ray, Arijit},
+  title   = {Minerva: a JSON-backed slide editor for human + Claude collaboration},
+  year    = {2026},
+  url     = {https://github.com/arijitray1993/minerva},
+  license = {MIT}
+}
+```
+
 ## License
 
-MIT.
+Minerva is released under the [MIT License](LICENSE) — free to use, modify,
+and redistribute, including in commercial projects. Just keep the copyright
+notice in copies and substantial derivatives.
