@@ -12,7 +12,7 @@ import type {
   TextElementT,
 } from "@minerva/schema";
 import { useStore } from "./store";
-import { firstTextStyle, plainText, ensureFontLoaded, ensureFontWeightLoaded, layoutTextDoc } from "./text";
+import { firstTextStyle, plainText, plainTextDoc, ensureFontLoaded, ensureFontWeightLoaded, layoutTextDoc } from "./text";
 import { SHAPE_GEOMETRY, scalePolygon, roundRectPath } from "./shapes";
 import { TableEl } from "./TableEl";
 import { submitClaudeComment } from "./sync";
@@ -45,6 +45,7 @@ export function SlideCanvas({ deck, slide }: Props) {
   const fontRevision = useStore((s) => s.fontRevision);
   const tool = useStore((s) => s.tool);
   const setTool = useStore((s) => s.setTool);
+  const pendingShapeKind = useStore((s) => s.pendingShapeKind);
   const addElement = useStore((s) => s.addElement);
   const formatToPaint = useStore((s) => s.formatToPaint);
   const [drawProgress, setDrawProgress] = useState<{ start: { x: number; y: number }; control?: { x: number; y: number }; cursor?: { x: number; y: number } } | null>(null);
@@ -322,6 +323,60 @@ export function SlideCanvas({ deck, slide }: Props) {
         addElement(slide.id, newEl as any);
         setDrawProgress(null);
         setTool("select");
+      }
+      return;
+    }
+    if (tool === "shape" || tool === "text") {
+      const p = localPointer();
+      if (!p) return;
+      e.cancelBubble = true;
+      if (!drawProgress) {
+        setDrawProgress({ start: p, cursor: p });
+      } else {
+        // Two-click bounding box: normalize so width/height are positive even
+        // if the user dragged up-and-left.
+        const s = drawProgress.start;
+        const x = Math.min(s.x, p.x);
+        const y = Math.min(s.y, p.y);
+        let w = Math.abs(p.x - s.x);
+        let h = Math.abs(p.y - s.y);
+        // Tiny drags / accidental double-clicks: enforce a usable minimum so
+        // the new element isn't a zero-size phantom.
+        const MIN_W = tool === "text" ? 200 : 80;
+        const MIN_H = tool === "text" ? 60 : 60;
+        if (w < MIN_W) w = MIN_W;
+        if (h < MIN_H) h = MIN_H;
+        const id = `${tool === "text" ? "text" : "shape"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        let newEl: ElementT;
+        if (tool === "text") {
+          newEl = {
+            id,
+            type: "text",
+            x, y, w, h, rotation: 0,
+            content: plainTextDoc("New text"),
+            style: { align: "left", padding: 8 },
+          };
+        } else {
+          // pendingShapeKind set by the toolbar; fall back to rect if it
+          // somehow got cleared so the click still produces something visible.
+          const kind = pendingShapeKind ?? "rect";
+          newEl = {
+            id,
+            type: "shape",
+            shapeKind: kind,
+            x, y, w, h, rotation: 0,
+            style: { fill: "#bdd6f7", stroke: "#3b6ea8", strokeWidth: 1, opacity: 1 },
+          };
+        }
+        addElement(slide.id, newEl);
+        setDrawProgress(null);
+        setTool("select");
+        // For a freshly placed text box, jump straight into inline edit so
+        // the user can type — matches the muscle memory of just typing after
+        // adding a text box in Google Slides.
+        if (tool === "text") {
+          setEditingText(id);
+        }
       }
       return;
     }
@@ -619,7 +674,28 @@ export function SlideCanvas({ deck, slide }: Props) {
               />
             );
           })()}
-          {drawProgress && (() => {
+          {drawProgress && (tool === "shape" || tool === "text") && (() => {
+            // 2-click bounding box preview for shape/text placement.
+            const s = drawProgress.start;
+            const c = drawProgress.cursor ?? s;
+            const x = Math.min(s.x, c.x);
+            const y = Math.min(s.y, c.y);
+            const w = Math.abs(c.x - s.x);
+            const h = Math.abs(c.y - s.y);
+            return (
+              <Rect
+                x={x}
+                y={y}
+                width={w}
+                height={h}
+                stroke="#3b6ea8"
+                strokeWidth={1 / scale}
+                dash={[6 / scale, 4 / scale]}
+                listening={false}
+              />
+            );
+          })()}
+          {drawProgress && (tool === "line" || tool === "arrow" || tool === "curve") && (() => {
             const s = drawProgress.start;
             const c = drawProgress.control ?? drawProgress.cursor ?? s;
             const e = drawProgress.cursor ?? c;

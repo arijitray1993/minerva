@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import type { Editor } from "@tiptap/react";
-import type { DeckT, ElementT, SlideT } from "@minerva/schema";
+import type { DeckT, ElementT, ShapeKind, SlideT } from "@minerva/schema";
 import { firstRunMarks, applyMarksToAll } from "./text";
+
+export type Tool = "select" | "line" | "arrow" | "curve" | "shape" | "text";
 
 type HistoryEntry = { deck: DeckT };
 
@@ -15,14 +17,22 @@ type State = {
   applyingRemote: boolean;
   /** Bumped after a web font finishes loading so the Konva canvas redraws with correct measurements. */
   fontRevision: number;
-  /** Active drawing tool; "select" is the default. The line-like tools all
-   *  use a click-to-place flow on the canvas instead of inserting blindly. */
-  tool: "select" | "line" | "arrow" | "curve";
+  /** Active drawing tool; "select" is the default. All non-select tools use a
+   *  click-to-place flow on the canvas instead of inserting blindly: lines and
+   *  arrows take start/end clicks, curves take start/control/end, and "shape"
+   *  and "text" take two clicks defining a bounding box. */
+  tool: Tool;
+  /** When `tool === "shape"`, which shape to drop on click-to-place. */
+  pendingShapeKind: ShapeKind | null;
   /** When set, the next non-source selection will receive this element's formatting. */
   formatToPaint: { sourceId: string } | null;
   /** Set while the user is editing a text element inline. The inspector reads
    *  it to provide selection-aware formatting controls. */
   activeTextEditor: Editor | null;
+  /** Internal element clipboard for in-app copy/paste. Distinct from the
+   *  system clipboard — Cmd+V on the canvas prefers a fresh system-clipboard
+   *  image (e.g. paste from another tab) and falls back to this. */
+  clipboard: ElementT[];
 };
 
 type Actions = {
@@ -41,7 +51,10 @@ type Actions = {
   setDeckTitle: (title: string) => void;
   setDeckSize: (w: number, h: number) => void;
   bumpFontRevision: () => void;
-  setTool: (tool: "select" | "line" | "arrow" | "curve") => void;
+  setTool: (tool: Tool) => void;
+  /** Set both the tool to "shape" and which shape will be dropped on the next
+   *  two clicks. Pass `null` to clear the pending kind. */
+  setPendingShapeKind: (kind: ShapeKind | null) => void;
   setFormatToPaint: (v: { sourceId: string } | null) => void;
   applyFormatFromSource: (slideId: string, targetId: string) => void;
   setActiveTextEditor: (ed: Editor | null) => void;
@@ -53,6 +66,7 @@ type Actions = {
    *  handler before the page reloads). Null when not editing. */
   flushActiveEditor: (() => void) | null;
   setFlushActiveEditor: (fn: (() => void) | null) => void;
+  setClipboard: (els: ElementT[]) => void;
 };
 
 export const useStore = create<State & Actions>((set, get) => ({
@@ -64,9 +78,11 @@ export const useStore = create<State & Actions>((set, get) => ({
   applyingRemote: false,
   fontRevision: 0,
   tool: "select",
+  pendingShapeKind: null,
   formatToPaint: null,
   activeTextEditor: null,
   flushActiveEditor: null,
+  clipboard: [],
 
   setDeck: (deck, fromRemote) => {
     set((s) => {
@@ -176,10 +192,18 @@ export const useStore = create<State & Actions>((set, get) => ({
     }),
 
   bumpFontRevision: () => set((s) => ({ fontRevision: s.fontRevision + 1 })),
-  setTool: (tool) => set({ tool }),
+  setTool: (tool) => set((s) => ({
+    tool,
+    // Selecting any tool that isn't "shape" clears the pending shape kind so a
+    // stale kind can't bleed into the next gesture.
+    pendingShapeKind: tool === "shape" ? s.pendingShapeKind : null,
+  })),
+  setPendingShapeKind: (kind) =>
+    set({ tool: kind ? "shape" : "select", pendingShapeKind: kind }),
   setFormatToPaint: (v) => set({ formatToPaint: v }),
   setActiveTextEditor: (ed) => set({ activeTextEditor: ed }),
   setFlushActiveEditor: (fn) => set({ flushActiveEditor: fn }),
+  setClipboard: (els) => set({ clipboard: els }),
 
   nudgeSelected: (dx, dy) =>
     mutate(set, get, (deck) => {

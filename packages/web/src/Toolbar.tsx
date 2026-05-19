@@ -3,7 +3,6 @@ import { useStore } from "./store";
 import { uploadAsset } from "./sync";
 import type { ElementT, ShapeKind } from "@minerva/schema";
 import { newTable } from "@minerva/schema";
-import { plainTextDoc } from "./text";
 import { SHAPE_GROUPS, SHAPE_LABELS, type ShapeKindCategory } from "./shapes";
 
 function newId(prefix: string) {
@@ -21,6 +20,8 @@ export function Toolbar() {
   const redo = useStore((s) => s.redo);
   const tool = useStore((s) => s.tool);
   const setTool = useStore((s) => s.setTool);
+  const pendingShapeKind = useStore((s) => s.pendingShapeKind);
+  const setPendingShapeKind = useStore((s) => s.setPendingShapeKind);
   const selectedIds = useStore((s) => s.selectedIds);
   const formatToPaint = useStore((s) => s.formatToPaint);
   const setFormatToPaint = useStore((s) => s.setFormatToPaint);
@@ -29,34 +30,19 @@ export function Toolbar() {
   if (!deck || !currentSlideId) return <div className="toolbar" />;
 
   const addText = () => {
-    const el: ElementT = {
-      id: newId("text"),
-      type: "text",
-      x: 100, y: 100, w: 600, h: 80, rotation: 0,
-      content: plainTextDoc("New text"),
-      style: { align: "left", padding: 8 },
-    };
-    addElement(currentSlideId, el);
+    // Text boxes are placed via two clicks on the canvas (top-left, then
+    // bottom-right). After placement the canvas auto-enters inline edit mode.
+    setTool("text");
   };
   const addShape = (kind: ShapeKind) => {
     setShapeMenuOpen(false);
-    // Line-like shapes use click-to-place on the canvas — the user clicks the
-    // start and end points (and a control point for curves). Inserting them
-    // at a fixed location made them invisibly tiny on a big poster.
+    // Lines/arrows use 2-click start/end; curves use 3-click start/control/end;
+    // every other shape uses 2-click bounding box. Inserting at a fixed
+    // location made shapes invisibly tiny on a big poster.
     if (kind === "line") { setTool("line"); return; }
     if (kind === "arrow") { setTool("arrow"); return; }
     if (kind === "curveQuad") { setTool("curve"); return; }
-    const el: ElementT = {
-      id: newId("shape"),
-      type: "shape",
-      shapeKind: kind,
-      x: 200, y: 200,
-      w: 200,
-      h: 160,
-      rotation: 0,
-      style: { fill: "#bdd6f7", stroke: "#3b6ea8", strokeWidth: 1, opacity: 1 },
-    };
-    addElement(currentSlideId, el);
+    setPendingShapeKind(kind);
   };
   const addTable = () => {
     addElement(currentSlideId, newTable(3, 3));
@@ -131,7 +117,9 @@ export function Toolbar() {
         >
           {tool === "line" ? "✏︎ drawing line — click start, click end (Esc to cancel)" :
            tool === "arrow" ? "✏︎ drawing arrow — click start, click end (Esc to cancel)" :
-           "✏︎ drawing curve — click start, click control, click end (Esc to cancel)"}
+           tool === "curve" ? "✏︎ drawing curve — click start, click control, click end (Esc to cancel)" :
+           tool === "text" ? "✏︎ placing text box — click top-left, click bottom-right (Esc to cancel)" :
+           `✏︎ placing ${pendingShapeKind ? SHAPE_LABELS[pendingShapeKind] : "shape"} — click top-left, click bottom-right (Esc to cancel)`}
         </button>
       )}
       <span className="sep" />

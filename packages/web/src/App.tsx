@@ -7,6 +7,25 @@ import { SlidesSidebar } from "./SlidesSidebar";
 import { Toolbar } from "./Toolbar";
 import type { ElementT } from "@minerva/schema";
 
+/** Deep-clone an element, recursively assigning fresh IDs (the top-level id
+ *  and every id inside a group's children). The shape of the copy is otherwise
+ *  byte-identical to the source so formatting, content, crop, table cells,
+ *  etc. all survive. */
+function cloneElementWithFreshIds(el: ElementT): ElementT {
+  const copy = JSON.parse(JSON.stringify(el)) as ElementT;
+  const fresh = (prefix: string) =>
+    `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const reassign = (e: ElementT) => {
+    const prefix = e.type === "table" ? "table" : e.type === "image" ? "img" : e.type === "text" ? "text" : e.type === "group" ? "group" : "shape";
+    e.id = fresh(prefix);
+    if (e.type === "group") {
+      for (const child of e.children) reassign(child);
+    }
+  };
+  reassign(copy);
+  return copy;
+}
+
 export function App() {
   const deck = useStore((s) => s.deck);
   const currentSlideId = useStore((s) => s.currentSlideId);
@@ -78,6 +97,23 @@ export function App() {
         else if (e.key === "ArrowDown") dy = step;
         e.preventDefault();
         useStore.getState().nudgeSelected(dx, dy);
+      } else if (meta && (e.key === "c" || e.key === "C") && !inEditor) {
+        // Copy current selection into the in-app clipboard. We deliberately
+        // don't touch the system clipboard so paste-from-other-tab (images,
+        // SVG) still works untouched.
+        const st = useStore.getState();
+        if (currentSlideId && selectedIds.length > 0 && st.deck) {
+          const slide = findSlide(st.deck, currentSlideId);
+          if (slide) {
+            const els = selectedIds
+              .map((id) => slide.elements.find((el) => el.id === id))
+              .filter((x): x is ElementT => !!x);
+            if (els.length > 0) {
+              st.setClipboard(els.map((el) => JSON.parse(JSON.stringify(el))));
+              e.preventDefault();
+            }
+          }
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -200,6 +236,32 @@ export function App() {
           if (r) await uploadBlobAsImage(r.blob, `paste-${Date.now()}.png`, { w: r.w, h: r.h });
           return;
         }
+      }
+
+      // 3. Fall back to the in-app clipboard: paste deep copies of whatever
+      // the user last Cmd+C'd inside Minerva, with fresh IDs and a small
+      // offset so they're visibly distinct from the originals.
+      const st = useStore.getState();
+      if (st.clipboard.length > 0) {
+        e.preventDefault();
+        const PASTE_OFFSET = 24;
+        const newIds: string[] = [];
+        for (const src of st.clipboard) {
+          const copy = cloneElementWithFreshIds(src);
+          copy.x += PASTE_OFFSET;
+          copy.y += PASTE_OFFSET;
+          addElement(currentSlideId, copy);
+          newIds.push(copy.id);
+        }
+        // Re-stash the pasted clones so a chain of Cmd+V steps each new copy
+        // further from the previous one (Figma/Slides behavior).
+        st.setClipboard(st.clipboard.map((src) => {
+          const c = JSON.parse(JSON.stringify(src)) as ElementT;
+          c.x += PASTE_OFFSET;
+          c.y += PASTE_OFFSET;
+          return c;
+        }));
+        useStore.getState().setSelection(newIds);
       }
     };
     window.addEventListener("paste", onPaste);
