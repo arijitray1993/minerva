@@ -11,7 +11,7 @@ import type {
   TableElementT,
   TextElementT,
 } from "@minerva/schema";
-import { useStore } from "./store";
+import { useStore, scaleElement } from "./store";
 import { firstTextStyle, plainText, plainTextDoc, ensureFontLoaded, ensureFontWeightLoaded, layoutTextDoc } from "./text";
 import { SHAPE_GEOMETRY, scalePolygon, roundRectPath } from "./shapes";
 import { TableEl } from "./TableEl";
@@ -733,7 +733,13 @@ export function SlideCanvas({ deck, slide }: Props) {
       })()}
       <CommentLayer slide={slide} offset={offset} scale={scale} />
 
-      {contextMenu && (
+      {contextMenu && (() => {
+        // Which group/ungroup actions are available depends on the live
+        // selection, not just the right-clicked element.
+        const canGroup = selectedIds.length >= 2;
+        const ctxEl = slide.elements.find((e) => e.id === contextMenu.elementId);
+        const canUngroup = selectedIds.length === 1 && ctxEl?.type === "group";
+        return (
         <div
           className="context-menu"
           style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, zIndex: 1000 }}
@@ -747,8 +753,31 @@ export function SlideCanvas({ deck, slide }: Props) {
           >
             Leave Claude comment…
           </button>
+          {canGroup && (
+            <button
+              onClick={() => {
+                useStore.getState().groupSelected(slide.id);
+                setContextMenu(null);
+              }}
+              title="Wrap the selected elements into a single group"
+            >
+              Group ({selectedIds.length})
+            </button>
+          )}
+          {canUngroup && (
+            <button
+              onClick={() => {
+                useStore.getState().ungroup(slide.id, contextMenu.elementId);
+                setContextMenu(null);
+              }}
+              title="Lift the group's children back out as individual elements"
+            >
+              Ungroup
+            </button>
+          )}
         </div>
-      )}
+        );
+      })()}
       {commentDialog && (
         <div
           className="comment-dialog"
@@ -872,9 +901,29 @@ function RenderElement({ el, pointerPaused, selected, groupDragActive, onDoubleC
       return <ImageEl el={el} common={common} />;
     case "table":
       return <TableEl el={el} common={common} />;
-    case "group":
+    case "group": {
+      // Resizing a group: the transformer changes scaleX/scaleY on the Konva
+      // Group, which visually scales all children via the parent transform —
+      // but the children's stored x/y/w/h don't change. Bake the scale into
+      // every child (recursively) so the new size sticks across re-renders.
+      const onGroupTransformEnd = (e: Konva.KonvaEventObject<Event>) => {
+        const node = e.target;
+        const sx = node.scaleX();
+        const sy = node.scaleY();
+        node.scaleX(1);
+        node.scaleY(1);
+        const s = (sx + sy) / 2;
+        onChange({
+          x: node.x(),
+          y: node.y(),
+          w: Math.max(5, el.w * sx),
+          h: Math.max(5, el.h * sy),
+          rotation: node.rotation(),
+          children: el.children.map((c) => scaleElement(c, sx, sy, s)),
+        } as any);
+      };
       return (
-        <Group {...common} width={el.w} height={el.h}>
+        <Group {...common} onTransformEnd={onGroupTransformEnd} width={el.w} height={el.h}>
           {el.children.map((c) => (
             <RenderElement
               key={c.id}
@@ -889,6 +938,7 @@ function RenderElement({ el, pointerPaused, selected, groupDragActive, onDoubleC
           {/* (group children get no double-click crop handler — only top-level images do) */}
         </Group>
       );
+    }
   }
 }
 

@@ -63,6 +63,14 @@ type Actions = {
   /** Move every currently-selected (non-locked) element by (dx, dy) in slide
    *  coords, batched into a single mutate so undo reverts the whole nudge. */
   nudgeSelected: (dx: number, dy: number) => void;
+  /** Wrap the current selection's top-level elements into a single group
+   *  element. Children are rebased so their coordinates are relative to the
+   *  new group's origin (the bounding-box top-left of the selection). No-op
+   *  if fewer than two elements are selected. */
+  groupSelected: (slideId: string) => void;
+  /** Inverse of groupSelected: replace a group with its children at their
+   *  original absolute slide coordinates. */
+  ungroup: (slideId: string, groupId: string) => void;
   /** Function the inline TipTap overlay registers so we can synchronously
    *  flush its pending content into the store (e.g. from a beforeunload
    *  handler before the page reloads). Null when not editing. */
@@ -225,6 +233,60 @@ export const useStore = create<State & Actions>((set, get) => ({
       }
     }),
 
+  groupSelected: (slideId) => {
+    const ids = new Set(get().selectedIds);
+    if (ids.size < 2) return;
+    let newGroupId = "";
+    mutate(set, get, (deck) => {
+      const slide = deck.slides.find((s) => s.id === slideId);
+      if (!slide) return;
+      // Preserve z-order: keep the original index of each selected element.
+      const picked: Array<{ idx: number; el: ElementT }> = [];
+      for (let i = 0; i < slide.elements.length; i++) {
+        if (ids.has(slide.elements[i].id)) picked.push({ idx: i, el: slide.elements[i] });
+      }
+      if (picked.length < 2) return;
+      const bbox = bboxOfElements(picked.map((p) => p.el));
+      if (!bbox) return;
+      const children = picked.map(({ el }) => ({ ...el, x: el.x - bbox.x, y: el.y - bbox.y }) as ElementT);
+      newGroupId = `group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      const group: ElementT = {
+        id: newGroupId,
+        type: "group",
+        x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h, rotation: 0,
+        children,
+      };
+      // Drop the picked elements, insert the group at the topmost picked slot
+      // so the new group sits where the user's eye expects it in z-order.
+      const insertAt = picked[picked.length - 1].idx;
+      const remaining = slide.elements.filter((e) => !ids.has(e.id));
+      // remaining preserves order; calculate where the insertion lands relative
+      // to surviving siblings.
+      const survivorsBeforeInsertion = slide.elements
+        .slice(0, insertAt + 1)
+        .filter((e) => !ids.has(e.id)).length;
+      remaining.splice(survivorsBeforeInsertion, 0, group);
+      slide.elements = remaining;
+    });
+    if (newGroupId) set({ selectedIds: [newGroupId] });
+  },
+
+  ungroup: (slideId, groupId) => {
+    let liftedIds: string[] = [];
+    mutate(set, get, (deck) => {
+      const slide = deck.slides.find((s) => s.id === slideId);
+      if (!slide) return;
+      const idx = slide.elements.findIndex((e) => e.id === groupId);
+      if (idx < 0) return;
+      const g = slide.elements[idx];
+      if (g.type !== "group") return;
+      const lifted = g.children.map((c) => ({ ...c, x: c.x + g.x, y: c.y + g.y }) as ElementT);
+      liftedIds = lifted.map((c) => c.id);
+      slide.elements.splice(idx, 1, ...lifted);
+    });
+    if (liftedIds.length > 0) set({ selectedIds: liftedIds });
+  },
+
   applyFormatFromSource: (slideId, targetId) => {
     const s = get();
     const sourceId = s.formatToPaint?.sourceId;
@@ -285,6 +347,25 @@ function deepClone<T>(x: T): T {
   return JSON.parse(JSON.stringify(x));
 }
 
+/** Axis-aligned bounding box of a list of elements in slide coords. Handles
+ *  lines/arrows that store negative w/h (drawn up-and-left). Returns null for
+ *  an empty list. */
+function bboxOfElements(els: ElementT[]): { x: number; y: number; w: number; h: number } | null {
+  if (els.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const el of els) {
+    const x1 = el.w < 0 ? el.x + el.w : el.x;
+    const x2 = el.w < 0 ? el.x : el.x + el.w;
+    const y1 = el.h < 0 ? el.y + el.h : el.y;
+    const y2 = el.h < 0 ? el.y : el.y + el.h;
+    if (x1 < minX) minX = x1;
+    if (y1 < minY) minY = y1;
+    if (x2 > maxX) maxX = x2;
+    if (y2 > maxY) maxY = y2;
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
 export function findSlide(deck: DeckT, slideId: string): SlideT | undefined {
   return deck.slides.find((s) => s.id === slideId);
 }
@@ -310,7 +391,19 @@ function applyFormat(source: ElementT, target: ElementT): ElementT {
   const next: any = { ...target };
   const sStyle = (source as any).style;
   if (sStyle) {
-    next.style = { ...((target as any).style ?? {}), ...sStyle };
+    // Lines / arrows / curves are defined by geometry fields that live in
+    // `style` (controlX/Y for the bezier control point, arrowStart/End for
+    // tips). Painting those across would change the shape itself, not its
+    // formatting. So when either side is a line-like shape we restrict the
+    // copy to pure appearance — stroke color and thickness.
+    if (isLineLike(source) || isLineLike(target)) {
+      const filtered: any = {};
+      if (sStyle.stroke !== undefined) filtered.stroke = sStyle.stroke;
+      if (sStyle.strokeWidth !== undefined) filtered.strokeWidth = sStyle.strokeWidth;
+      next.style = { ...((target as any).style ?? {}), ...filtered };
+    } else {
+      next.style = { ...((target as any).style ?? {}), ...sStyle };
+    }
   }
   if (source.type === "text" && target.type === "text") {
     const marks = firstRunMarks((source as any).content);
@@ -319,12 +412,18 @@ function applyFormat(source: ElementT, target: ElementT): ElementT {
   return next as ElementT;
 }
 
+const LINE_LIKE_SHAPE_KINDS = new Set(["line", "arrow", "curveQuad"]);
+function isLineLike(el: ElementT): boolean {
+  return el.type === "shape" && LINE_LIKE_SHAPE_KINDS.has((el as any).shapeKind);
+}
+
 /**
- * Rescale an element when the deck dimensions change.
+ * Rescale an element when the deck dimensions change OR when a group it lives
+ * inside is resized via the canvas transformer.
  *   sx, sy = per-axis scale (for position / box / curve control)
  *   s      = unitless scale for things without an axis (font, stroke, padding, blur, ...)
  */
-function scaleElement(el: ElementT, sx: number, sy: number, s: number): ElementT {
+export function scaleElement(el: ElementT, sx: number, sy: number, s: number): ElementT {
   const next: any = {
     ...el,
     x: el.x * sx,
