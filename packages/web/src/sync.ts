@@ -21,9 +21,43 @@ export function watchAndSave() {
   });
 }
 
+/**
+ * Last-chance save on page unload — for the case where the user refreshes (or
+ * closes the tab) before our debounced save has fired. Flushes the in-flight
+ * TipTap editor content into the store first, then PUTs the deck with
+ * `keepalive: true` so the request survives the unload.
+ */
+export function setupBeforeUnloadSave() {
+  window.addEventListener("beforeunload", () => {
+    const s = useStore.getState();
+    // Flush any pending TipTap edits into the deck state synchronously.
+    if (s.flushActiveEditor) {
+      try { s.flushActiveEditor(); } catch { /* best-effort */ }
+    }
+    const deck = useStore.getState().deck;
+    if (!deck) return;
+    const json = JSON.stringify(deck);
+    if (json === lastSavedJson) return;
+    try {
+      fetch("/api/deck", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: json,
+        keepalive: true,
+      });
+      lastSavedJson = json;
+    } catch {
+      /* unload-time errors are unrecoverable; swallow */
+    }
+  });
+}
+
 function scheduleSave() {
   if (saveTimer) window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(saveNow, 300);
+  // Tight debounce so a single change → save fires on the next animation
+  // frame, not 300 ms later. The user shouldn't have to wait for an idle
+  // window to know their edit is on disk.
+  saveTimer = window.setTimeout(saveNow, 40);
 }
 
 export async function saveNow() {
@@ -38,7 +72,9 @@ export async function saveNow() {
       body: json,
     });
     if (!r.ok) {
-      console.error("save failed", await r.text());
+      // Surface validation failures — silent rejects produced the "edits
+      // disappear on refresh" class of bug.
+      console.error("save failed", r.status, await r.text());
       return;
     }
     lastSavedJson = json;

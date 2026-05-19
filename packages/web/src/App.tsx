@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useStore, findSlide } from "./store";
-import { connectWebsocket, loadDeck, uploadAsset, watchAndSave } from "./sync";
+import { connectWebsocket, loadDeck, uploadAsset, watchAndSave, setupBeforeUnloadSave } from "./sync";
 import { SlideCanvas } from "./SlideCanvas";
 import { Inspector } from "./Inspector";
 import { SlidesSidebar } from "./SlidesSidebar";
@@ -42,6 +42,7 @@ export function App() {
     loadDeck().catch((err) => console.error(err));
     watchAndSave();
     connectWebsocket();
+    setupBeforeUnloadSave();
   }, []);
 
   // Keyboard shortcuts: undo/redo + delete + paste images.
@@ -83,28 +84,120 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedIds, currentSlideId, undo, redo, removeElement]);
 
-  // Paste images from clipboard.
+  // Paste images from clipboard. Handles three sources:
+  //   1. A direct image File item (Cmd+V after "Copy Image" from any web page).
+  //   2. An <img> element in clipboard text/html (Google Slides image paste, or
+  //      copy-as-html from a web page) — supports both data: URLs and remote URLs.
+  //   3. An inline <svg> in clipboard text/html (Google Slides shape paste) —
+  //      we rasterize the SVG to PNG via canvas and add it as an image element.
   useEffect(() => {
+    const addImageElement = (path: string, w = 480, h = 360) => {
+      if (!currentSlideId) return;
+      const el: ElementT = {
+        id: `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        type: "image",
+        x: 200, y: 150, w, h, rotation: 0,
+        src: path,
+        fit: "contain",
+      };
+      addElement(currentSlideId, el);
+    };
+
+    const uploadBlobAsImage = async (data: Blob | File, name = `paste-${Date.now()}.png`, dims?: { w: number; h: number }) => {
+      const file = data instanceof File ? data : new File([data], name, { type: data.type || "image/png" });
+      const { path } = await uploadAsset(file, name);
+      addImageElement(path, dims?.w, dims?.h);
+    };
+
+    const rasterizeSvg = async (svgString: string): Promise<{ blob: Blob; w: number; h: number } | null> => {
+      // Parse SVG to read its natural dimensions, fall back to viewBox or 480×360.
+      const probe = new DOMParser().parseFromString(svgString, "image/svg+xml").documentElement;
+      const widthAttr = parseFloat(probe.getAttribute("width") || "");
+      const heightAttr = parseFloat(probe.getAttribute("height") || "");
+      let w = isNaN(widthAttr) ? 0 : widthAttr;
+      let h = isNaN(heightAttr) ? 0 : heightAttr;
+      if (!w || !h) {
+        const vb = probe.getAttribute("viewBox");
+        if (vb) {
+          const parts = vb.split(/\s+/).map(Number);
+          if (parts.length === 4 && !parts.some(isNaN)) { w = w || parts[2]; h = h || parts[3]; }
+        }
+      }
+      if (!w || !h) { w = 480; h = 360; }
+      const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      try {
+        const img = await new Promise<HTMLImageElement | null>((resolve) => {
+          const i = new Image();
+          i.onload = () => resolve(i);
+          i.onerror = () => resolve(null);
+          i.src = url;
+        });
+        if (!img) return null;
+        const drawW = img.naturalWidth || w;
+        const drawH = img.naturalHeight || h;
+        const canvas = document.createElement("canvas");
+        canvas.width = drawW; canvas.height = drawH;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return null;
+        ctx.drawImage(img, 0, 0, drawW, drawH);
+        return await new Promise<{ blob: Blob; w: number; h: number } | null>((resolve) => {
+          canvas.toBlob((b) => resolve(b ? { blob: b, w: drawW, h: drawH } : null), "image/png");
+        });
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+
     const onPaste = async (e: ClipboardEvent) => {
       if (!currentSlideId) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (const item of items) {
+      const cd = e.clipboardData;
+      if (!cd) return;
+
+      // 1. Direct file item.
+      for (const item of cd.items) {
         if (item.kind === "file" && item.type.startsWith("image/")) {
           const file = item.getAsFile();
           if (!file) continue;
           e.preventDefault();
-          const { path } = await uploadAsset(file, `paste-${Date.now()}.png`);
-          const el: ElementT = {
-            id: `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-            type: "image",
-            x: 200, y: 150, w: 480, h: 360, rotation: 0,
-            src: path,
-            fit: "contain",
-          };
-          addElement(currentSlideId, el);
+          await uploadBlobAsImage(file);
+          return;
+        }
+      }
+
+      // 2. text/html with <img> or <svg>.
+      const html = cd.getData("text/html");
+      if (html) {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const imgEl = doc.querySelector("img");
+        if (imgEl && imgEl.src) {
+          e.preventDefault();
+          try {
+            const resp = await fetch(imgEl.src);
+            if (resp.ok) {
+              const blob = await resp.blob();
+              if (blob.type.startsWith("image/")) {
+                const w = parseFloat(imgEl.getAttribute("width") || "") || undefined;
+                const h = parseFloat(imgEl.getAttribute("height") || "") || undefined;
+                const ext = blob.type.split("/")[1] || "png";
+                await uploadBlobAsImage(blob, `paste-${Date.now()}.${ext}`, w && h ? { w, h } : undefined);
+                return;
+              }
+            } else {
+              console.warn("paste: fetch of pasted image src failed", resp.status);
+            }
+          } catch (err) {
+            console.warn("paste: pasted image src not fetchable (likely CORS)", err);
+          }
+        }
+        const svgEl = doc.querySelector("svg");
+        if (svgEl) {
+          e.preventDefault();
+          const svgString = new XMLSerializer().serializeToString(svgEl);
+          const r = await rasterizeSvg(svgString);
+          if (r) await uploadBlobAsImage(r.blob, `paste-${Date.now()}.png`, { w: r.w, h: r.h });
           return;
         }
       }

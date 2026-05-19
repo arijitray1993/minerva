@@ -48,6 +48,11 @@ type Actions = {
   /** Move every currently-selected (non-locked) element by (dx, dy) in slide
    *  coords, batched into a single mutate so undo reverts the whole nudge. */
   nudgeSelected: (dx: number, dy: number) => void;
+  /** Function the inline TipTap overlay registers so we can synchronously
+   *  flush its pending content into the store (e.g. from a beforeunload
+   *  handler before the page reloads). Null when not editing. */
+  flushActiveEditor: (() => void) | null;
+  setFlushActiveEditor: (fn: (() => void) | null) => void;
 };
 
 export const useStore = create<State & Actions>((set, get) => ({
@@ -61,6 +66,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   tool: "select",
   formatToPaint: null,
   activeTextEditor: null,
+  flushActiveEditor: null,
 
   setDeck: (deck, fromRemote) => {
     set((s) => {
@@ -173,6 +179,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   setTool: (tool) => set({ tool }),
   setFormatToPaint: (v) => set({ formatToPaint: v }),
   setActiveTextEditor: (ed) => set({ activeTextEditor: ed }),
+  setFlushActiveEditor: (fn) => set({ flushActiveEditor: fn }),
 
   nudgeSelected: (dx, dy) =>
     mutate(set, get, (deck) => {

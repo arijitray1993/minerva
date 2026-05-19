@@ -9,6 +9,7 @@ import { Superscript } from "@tiptap/extension-superscript";
 import { Subscript } from "@tiptap/extension-subscript";
 import type { TextElementT } from "@minerva/schema";
 import { useStore } from "./store";
+import { saveNow } from "./sync";
 import { firstTextStyle, ensureFontLoaded, GOOGLE_FONTS } from "./text";
 
 type Props = {
@@ -25,7 +26,11 @@ type Props = {
 export function TextEditOverlay({ el, slideId, containerOffset, scale, onExit }: Props) {
   const updateElement = useStore((s) => s.updateElement);
   const setActiveTextEditor = useStore((s) => s.setActiveTextEditor);
+  const setFlushActiveEditor = useStore((s) => s.setFlushActiveEditor);
   const overlayRef = useRef<HTMLDivElement>(null);
+  // Auto-save timer — debounce live edits into the store so refresh while
+  // still in edit mode doesn't lose work.
+  const autoSaveTimer = useRef<number | null>(null);
   const editor = useEditor({
     extensions: [
       StarterKit.configure({}),
@@ -40,24 +45,66 @@ export function TextEditOverlay({ el, slideId, containerOffset, scale, onExit }:
     ],
     content: el.content,
     autofocus: "end",
+    onUpdate: ({ editor: ed }) => {
+      if (autoSaveTimer.current) window.clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = window.setTimeout(() => {
+        const json = normalizeDocForSchema(ed.getJSON());
+        updateElement(slideId, el.id, { content: json } as any);
+        autoSaveTimer.current = null;
+      }, 200);
+    },
   });
 
   // Commit-on-exit: write the editor's JSON back to the element. TipTap's
   // FontSize extension stores values as strings like "24px"; our schema wants
-  // plain numbers, so normalize before saving.
+  // plain numbers, so normalize before saving. Also cancels any pending
+  // debounced auto-save so the final state is what gets persisted.
   const commit = () => {
+    if (autoSaveTimer.current) {
+      window.clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+    }
     if (!editor) return;
     const json = normalizeDocForSchema(editor.getJSON());
     updateElement(slideId, el.id, { content: json } as any);
+    // Decks bigger than ~64 KB blow past the keepalive size limit, so
+    // beforeunload can't reliably persist on refresh. Fire the PUT now
+    // instead of waiting on the watch-and-save debounce.
+    saveNow();
   };
+
+  // On unmount, flush any pending auto-save so navigating away (incl. refresh
+  // via the in-flight save) doesn't drop the latest edits.
+  useEffect(() => {
+    return () => {
+      if (editor) {
+        if (autoSaveTimer.current) {
+          window.clearTimeout(autoSaveTimer.current);
+          autoSaveTimer.current = null;
+        }
+        // Always re-commit on unmount so a stale auto-save can't be the last
+        // word, then force-save immediately.
+        const json = normalizeDocForSchema(editor.getJSON());
+        updateElement(slideId, el.id, { content: json } as any);
+        saveNow();
+      }
+    };
+    // editor is stable for the overlay lifetime; deps intentionally narrow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
 
   // Publish the live editor to the store so the side-panel inspector can
   // operate on its selection. Clear on unmount.
   useEffect(() => {
     if (!editor) return;
     setActiveTextEditor(editor);
-    return () => setActiveTextEditor(null);
-  }, [editor, setActiveTextEditor]);
+    setFlushActiveEditor(commit);
+    return () => {
+      setActiveTextEditor(null);
+      setFlushActiveEditor(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
 
   // Click-outside (excluding the inspector) / Escape → commit + exit.
   useEffect(() => {
@@ -137,25 +184,41 @@ export function TextEditOverlay({ el, slideId, containerOffset, scale, onExit }:
 
 /** Recursively coerce TipTap-emitted attrs into the shapes our Zod schema wants.
  *  - `textStyle.fontSize` may arrive as "24px" → strip the unit.
- *  - `textStyle.lineHeight` may arrive as "1.5" → parse to number. */
+ *  - `textStyle.lineHeight` may arrive as "1.5" → parse to number.
+ *  - TipTap's TextStyle extension emits *all* declared attributes on every mark,
+ *    even ones the user never set, as `null`. Our Zod schema uses `.optional()`
+ *    (string|undefined), not `.nullable()`, so any null value rejects the whole
+ *    PUT. Strip nulls/undefineds from mark attrs, and drop a mark entirely if
+ *    nothing survives. */
 function normalizeDocForSchema(doc: any): any {
   if (!doc || typeof doc !== "object") return doc;
   const out: any = { ...doc };
   if (Array.isArray(doc.marks)) {
-    out.marks = doc.marks.map((m: any) => {
-      if (m?.type === "textStyle" && m.attrs && typeof m.attrs === "object") {
-        const attrs: any = { ...m.attrs };
-        for (const k of ["fontSize", "lineHeight", "letterSpacing", "fontWeight"] as const) {
-          if (typeof attrs[k] === "string") {
-            const n = parseFloat(attrs[k]);
+    const cleaned: any[] = [];
+    for (const m of doc.marks) {
+      if (!m) continue;
+      const isAttrMark = m.type === "textStyle" || m.type === "highlight";
+      if (isAttrMark && m.attrs && typeof m.attrs === "object") {
+        const attrs: any = {};
+        for (const [k, v] of Object.entries(m.attrs)) {
+          if (v === null || v === undefined) continue;
+          if (["fontSize", "lineHeight", "letterSpacing", "fontWeight"].includes(k) && typeof v === "string") {
+            const n = parseFloat(v);
             if (!isNaN(n)) attrs[k] = n;
-            else delete attrs[k];
+            continue;
           }
+          attrs[k] = v;
         }
-        return { ...m, attrs };
+        // textStyle with no surviving attrs is functionally a no-op; drop it
+        // rather than send an empty {} that would render with no effect anyway.
+        if (Object.keys(attrs).length === 0) continue;
+        cleaned.push({ ...m, attrs });
+      } else {
+        cleaned.push(m);
       }
-      return m;
-    });
+    }
+    if (cleaned.length > 0) out.marks = cleaned;
+    else delete out.marks;
   }
   if (Array.isArray(doc.content)) {
     out.content = doc.content.map(normalizeDocForSchema);

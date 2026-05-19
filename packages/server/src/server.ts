@@ -24,6 +24,10 @@ export async function startServer({ root, port }: ServerOptions) {
   // --- API: deck read/write ---------------------------------------------------
   app.get("/api/deck", async (_req, res) => {
     const raw = await readFile(deckPath, "utf8");
+    // Belt-and-suspenders: the deck file changes on every edit; we don't want
+    // a browser to ever serve a stale cached copy on refresh, since that
+    // looks identical to "the edit wasn't saved" from the user's side.
+    res.set("Cache-Control", "no-store");
     res.type("application/json").send(raw);
   });
 
