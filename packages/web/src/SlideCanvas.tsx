@@ -17,6 +17,7 @@ import { SHAPE_GEOMETRY, scalePolygon, roundRectPath } from "./shapes";
 import { TableEl } from "./TableEl";
 import { submitClaudeComment } from "./sync";
 import { TextEditOverlay } from "./TextEditOverlay";
+import { CommentLayer } from "./CommentLayer";
 
 type Props = {
   deck: DeckT;
@@ -730,6 +731,8 @@ export function SlideCanvas({ deck, slide }: Props) {
           />
         );
       })()}
+      <CommentLayer slide={slide} offset={offset} scale={scale} />
+
       {contextMenu && (
         <div
           className="context-menu"

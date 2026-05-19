@@ -1,5 +1,5 @@
 import { useStore } from "./store";
-import type { DeckT } from "@minerva/schema";
+import type { DeckT, CommentT } from "@minerva/schema";
 
 let saveTimer: number | null = null;
 let lastSavedJson = "";
@@ -91,6 +91,11 @@ export function connectWebsocket() {
       const msg = JSON.parse(ev.data);
       if (msg.kind === "deck" && msg.source === "external") {
         await loadDeck();
+      } else if (msg.kind === "comments") {
+        // Reload regardless of source so the human sees Claude's status flips
+        // (open → in_progress → resolved) live, and also picks up their own
+        // edits made from another tab.
+        await loadComments();
       }
     } catch {
       /* ignore */
@@ -101,31 +106,54 @@ export function connectWebsocket() {
   };
 }
 
+export async function loadComments(): Promise<void> {
+  const r = await fetch("/api/comments");
+  if (!r.ok) return;
+  const body = (await r.json()) as { comments: CommentT[] };
+  useStore.getState().setComments(body.comments ?? []);
+}
+
+async function putComments(comments: CommentT[]): Promise<void> {
+  const r = await fetch("/api/comments", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ comments }),
+  });
+  if (!r.ok) throw new Error(`comments PUT failed: ${r.status}`);
+  // Update store optimistically — the WS broadcast will arrive a moment later
+  // and overwrite with the canonical disk content, which is fine.
+  useStore.getState().setComments(comments);
+}
+
 export async function submitClaudeComment(c: {
   slideId: string;
   targetIds: string[];
   request: string;
 }): Promise<void> {
-  // Read current comments, append, write back. Race window with Claude's own
-  // edits is small; if needed later we can promote this to a server-side POST.
-  const cur = await fetch("/api/comments").then((r) => (r.ok ? r.json() : { comments: [] }));
+  const cur = useStore.getState().comments;
   const id = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  const newComment = {
+  const newComment: CommentT = {
     id,
     slideId: c.slideId,
     targetIds: c.targetIds,
-    author: "human" as const,
+    author: "human",
     request: c.request,
-    status: "open" as const,
+    status: "open",
     createdAt: new Date().toISOString(),
   };
-  const next = { comments: [...(cur.comments ?? []), newComment] };
-  const r = await fetch("/api/comments", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(next),
+  await putComments([...cur, newComment]);
+}
+
+export async function setCommentStatus(id: string, status: CommentT["status"]): Promise<void> {
+  const cur = useStore.getState().comments;
+  const next = cur.map((c) => {
+    if (c.id !== id) return c;
+    const nextC: CommentT = { ...c, status };
+    if (status === "resolved") nextC.resolvedAt = new Date().toISOString();
+    else delete (nextC as any).resolvedAt;
+    return nextC;
   });
-  if (!r.ok) throw new Error(`comment submit failed: ${r.status}`);
+  await putComments(next);
 }
 
 export async function uploadAsset(file: File | Blob, filename?: string): Promise<{ path: string; url: string }> {

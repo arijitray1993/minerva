@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Editor } from "@tiptap/react";
-import type { DeckT, ElementT, ShapeKind, SlideT } from "@minerva/schema";
+import type { CommentT, DeckT, ElementT, ShapeKind, SlideT } from "@minerva/schema";
 import { firstRunMarks, applyMarksToAll } from "./text";
 
 export type Tool = "select" | "line" | "arrow" | "curve" | "shape" | "text";
@@ -33,6 +33,8 @@ type State = {
    *  system clipboard — Cmd+V on the canvas prefers a fresh system-clipboard
    *  image (e.g. paste from another tab) and falls back to this. */
   clipboard: ElementT[];
+  /** Mirror of comments.json. Refreshed on WS "comments" broadcasts. */
+  comments: CommentT[];
 };
 
 type Actions = {
@@ -67,6 +69,7 @@ type Actions = {
   flushActiveEditor: (() => void) | null;
   setFlushActiveEditor: (fn: (() => void) | null) => void;
   setClipboard: (els: ElementT[]) => void;
+  setComments: (comments: CommentT[]) => void;
 };
 
 export const useStore = create<State & Actions>((set, get) => ({
@@ -83,6 +86,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   activeTextEditor: null,
   flushActiveEditor: null,
   clipboard: [],
+  comments: [],
 
   setDeck: (deck, fromRemote) => {
     set((s) => {
@@ -204,6 +208,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   setActiveTextEditor: (ed) => set({ activeTextEditor: ed }),
   setFlushActiveEditor: (fn) => set({ flushActiveEditor: fn }),
   setClipboard: (els) => set({ clipboard: els }),
+  setComments: (comments) => set({ comments }),
 
   nudgeSelected: (dx, dy) =>
     mutate(set, get, (deck) => {

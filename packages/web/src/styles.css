@@ -260,6 +260,88 @@ body {
   color: white;
 }
 
+/* Inline comment marker + popover tile (anchored to the commented element). */
+.comment-marker {
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  border: 2px solid #fff;
+  background: #ffd03a;
+  color: #222;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.comment-marker.in_progress {
+  background: #88c4ff;
+}
+.comment-marker.open,
+.comment-marker:hover {
+  transform: scale(1.1);
+}
+.comment-tile {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  font-size: 13px;
+}
+.comment-tile-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.comment-tile-author {
+  font-weight: 600;
+}
+.comment-tile-when {
+  color: var(--muted);
+  font-size: 11px;
+}
+.comment-tile-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+.comment-tile-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+.comment-tile-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.comment-tile-actions button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.comment-tile-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.comment-tile-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
 .text-edit-overlay .ProseMirror,
 .text-edit-overlay .tiptap-content,
 .text-edit-overlay .tiptap-content > div {

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useStore, findSlide } from "./store";
-import { connectWebsocket, loadDeck, uploadAsset, watchAndSave, setupBeforeUnloadSave } from "./sync";
+import { connectWebsocket, loadComments, loadDeck, uploadAsset, watchAndSave, setupBeforeUnloadSave } from "./sync";
 import { SlideCanvas } from "./SlideCanvas";
 import { Inspector } from "./Inspector";
 import { SlidesSidebar } from "./SlidesSidebar";
@@ -59,6 +59,7 @@ export function App() {
 
   useEffect(() => {
     loadDeck().catch((err) => console.error(err));
+    loadComments().catch((err) => console.error(err));
     watchAndSave();
     connectWebsocket();
     setupBeforeUnloadSave();
