@@ -17,6 +17,7 @@ import { SHAPE_GEOMETRY, scalePolygon, roundRectPath } from "./shapes";
 import { TableEl } from "./TableEl";
 import { submitClaudeComment } from "./sync";
 import { TextEditOverlay } from "./TextEditOverlay";
+import { CellEditOverlay } from "./CellEditOverlay";
 import { CommentLayer } from "./CommentLayer";
 
 type Props = {
@@ -39,6 +40,8 @@ export function SlideCanvas({ deck, slide }: Props) {
   const [cropping, setCropping] = useState<string | null>(null);
   // Text element being edited inline via double-click (TipTap overlay).
   const [editingText, setEditingText] = useState<string | null>(null);
+  // Single table cell being edited inline. Identified by (tableId, row, col).
+  const [editingCell, setEditingCell] = useState<{ tableId: string; row: number; col: number } | null>(null);
 
   const selectedIds = useStore((s) => s.selectedIds);
   const setSelection = useStore((s) => s.setSelection);
@@ -567,15 +570,18 @@ export function SlideCanvas({ deck, slide }: Props) {
       return;
     }
     // Element drag — if a group snapshot was set, commit every selected node's
-    // new position to the store in one pass.
+    // new position to the store in one batched mutate so undo reverts the
+    // whole group-move as a single step, not one element at a time.
     const snap = groupDragSnapshot.current;
     if (!snap) return;
     const stage = stageRef.current;
     if (!stage) return;
+    const patches: Array<{ id: string; patch: Partial<ElementT> }> = [];
     for (const sid of snap.keys()) {
       const node = stage.findOne(`#${sid}`);
-      if (node) updateElement(slide.id, sid, { x: node.x(), y: node.y() } as any);
+      if (node) patches.push({ id: sid, patch: { x: node.x(), y: node.y() } });
     }
+    if (patches.length > 0) useStore.getState().updateElements(slide.id, patches);
     groupDragSnapshot.current = null;
   };
 
@@ -617,9 +623,17 @@ export function SlideCanvas({ deck, slide }: Props) {
             <RenderElement
               key={el.id}
               el={el}
-              pointerPaused={panMode || tool !== "select" || !!cropping || !!editingText}
+              pointerPaused={panMode || tool !== "select" || !!cropping || !!editingText || !!editingCell}
               selected={selectedIds.includes(el.id)}
               groupDragActive={selectedIds.length > 1 && selectedIds.includes(el.id)}
+              scale={scale}
+              onEditCell={el.type === "table" ? (row, col) => {
+                setSelection([el.id]);
+                setEditingCell({ tableId: el.id, row, col });
+              } : undefined}
+              editingCellId={editingCell && editingCell.tableId === el.id
+                ? `${editingCell.tableId}::${editingCell.row}-${editingCell.col}`
+                : null}
               onDoubleClick={
                 el.type === "image"
                   ? () => { setSelection([]); setCropping(el.id); }
@@ -646,6 +660,35 @@ export function SlideCanvas({ deck, slide }: Props) {
               onChange={(patch) => updateElement(slide.id, el.id, patch)}
             />
           ))}
+          {/* When multiple elements are selected, the Transformer wraps just
+              one bbox around the union — you can't see which individual
+              elements are in the selection. Add a dashed outline per element
+              so the membership is obvious. Skip for single-select since the
+              Transformer's own bbox is already unambiguous. */}
+          {selectedIds.length > 1 && selectedIds.map((id) => {
+            const el = slide.elements.find((e) => e.id === id);
+            if (!el) return null;
+            const isLine = el.type === "shape" && ["line", "arrow", "curveQuad"].includes((el as any).shapeKind);
+            // Lines encode direction via signed w/h, so use the normalized
+            // bbox and skip rotation (lines don't carry a separate rotation).
+            const bx = el.w < 0 ? el.x + el.w : el.x;
+            const by = el.h < 0 ? el.y + el.h : el.y;
+            return (
+              <Rect
+                key={`sel-${id}`}
+                x={isLine ? bx : el.x}
+                y={isLine ? by : el.y}
+                width={Math.abs(el.w)}
+                height={Math.abs(el.h)}
+                rotation={isLine ? 0 : (el.rotation ?? 0)}
+                stroke="#4a90e2"
+                strokeWidth={1.5 / scale}
+                dash={[6 / scale, 4 / scale]}
+                listening={false}
+                fillEnabled={false}
+              />
+            );
+          })}
           <Transformer
             ref={transformerRef}
             rotateEnabled
@@ -736,6 +779,20 @@ export function SlideCanvas({ deck, slide }: Props) {
             containerOffset={offset}
             scale={scale}
             onExit={() => setEditingText(null)}
+          />
+        );
+      })()}
+      {editingCell && (() => {
+        const t = slide.elements.find((x) => x.id === editingCell.tableId);
+        if (!t || t.type !== "table") return null;
+        return (
+          <CellEditOverlay
+            el={t}
+            row={editingCell.row}
+            col={editingCell.col}
+            offset={offset}
+            scale={scale}
+            onExit={() => setEditingCell(null)}
           />
         );
       })()}
@@ -849,9 +906,18 @@ type ElProps = {
   onDoubleClick?: () => void;
   onSelect: (additive: boolean) => void;
   onChange: (patch: Partial<ElementT>) => void;
+  /** Visual scale, threaded down so children that draw hit-handles can keep
+   *  them a constant pixel size at any zoom. */
+  scale?: number;
+  /** Table-only: called when the user double-clicks a cell to start editing. */
+  onEditCell?: (row: number, col: number) => void;
+  /** Table-only: id of the cell currently being edited (formatted as
+   *  `${tableId}::${row}-${col}`) so its plain-text render can be suppressed
+   *  while an overlay handles the input. */
+  editingCellId?: string | null;
 };
 
-function RenderElement({ el, pointerPaused, selected, groupDragActive, onDoubleClick, onSelect, onChange }: ElProps) {
+function RenderElement({ el, pointerPaused, selected, groupDragActive, onDoubleClick, onSelect, onChange, scale = 1, onEditCell, editingCellId }: ElProps) {
   // Common drag/transform handlers.
   const onDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
     if (groupDragActive) return; // stage-level handler commits all selected at once
@@ -913,7 +979,16 @@ function RenderElement({ el, pointerPaused, selected, groupDragActive, onDoubleC
     case "image":
       return <ImageEl el={el} common={common} />;
     case "table":
-      return <TableEl el={el} common={common} />;
+      return (
+        <TableEl
+          el={el}
+          common={common}
+          scale={scale}
+          onEditCell={onEditCell}
+          onResizeTracks={(patch) => onChange(patch as Partial<ElementT>)}
+          editingCellId={editingCellId ?? null}
+        />
+      );
     case "group": {
       // Resizing a group: the transformer changes scaleX/scaleY on the Konva
       // Group, which visually scales all children via the parent transform —

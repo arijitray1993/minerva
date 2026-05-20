@@ -31,7 +31,7 @@ export function App() {
   const deck = useStore((s) => s.deck);
   const currentSlideId = useStore((s) => s.currentSlideId);
   const addElement = useStore((s) => s.addElement);
-  const removeElement = useStore((s) => s.removeElement);
+  const removeElements = useStore((s) => s.removeElements);
   const selectedIds = useStore((s) => s.selectedIds);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
@@ -83,7 +83,8 @@ export function App() {
         const t = e.target as HTMLElement;
         if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
         e.preventDefault();
-        for (const id of selectedIds) removeElement(currentSlideId, id);
+        // Batch into one history entry so Cmd+Z restores the whole selection.
+        removeElements(currentSlideId, selectedIds);
       } else if (
         (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") &&
         selectedIds.length > 0 &&
@@ -120,7 +121,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedIds, currentSlideId, undo, redo, removeElement]);
+  }, [selectedIds, currentSlideId, undo, redo, removeElements]);
 
   // Paste images from clipboard. Handles three sources:
   //   1. A direct image File item (Cmd+V after "Copy Image" from any web page).

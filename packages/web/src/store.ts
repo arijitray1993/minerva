@@ -42,8 +42,14 @@ type Actions = {
   setCurrentSlide: (slideId: string) => void;
   setSelection: (ids: string[]) => void;
   updateElement: (slideId: string, elementId: string, patch: Partial<ElementT>) => void;
+  /** Apply many element patches atomically — one history entry covers the
+   *  whole batch, so Cmd+Z reverts the entire group move/transform/etc.
+   *  rather than one element at a time. */
+  updateElements: (slideId: string, patches: Array<{ id: string; patch: Partial<ElementT> }>) => void;
   addElement: (slideId: string, el: ElementT) => void;
   removeElement: (slideId: string, elementId: string) => void;
+  /** Delete many elements in one mutate so Cmd+Z reverts the whole batch. */
+  removeElements: (slideId: string, elementIds: string[]) => void;
   reorderElement: (slideId: string, elementId: string, op: "front" | "back" | "forward" | "backward") => void;
   addSlide: () => void;
   removeSlide: (slideId: string) => void;
@@ -129,6 +135,17 @@ export const useStore = create<State & Actions>((set, get) => ({
       slide.elements[idx] = { ...slide.elements[idx], ...patch } as ElementT;
     }),
 
+  updateElements: (slideId, patches) =>
+    mutate(set, get, (deck) => {
+      const slide = findSlide(deck, slideId);
+      if (!slide) return;
+      for (const { id, patch } of patches) {
+        const idx = slide.elements.findIndex((e) => e.id === id);
+        if (idx < 0) continue;
+        slide.elements[idx] = { ...slide.elements[idx], ...patch } as ElementT;
+      }
+    }),
+
   addElement: (slideId, el) => {
     mutate(set, get, (deck) => {
       const slide = findSlide(deck, slideId);
@@ -143,6 +160,14 @@ export const useStore = create<State & Actions>((set, get) => ({
       const slide = findSlide(deck, slideId);
       if (!slide) return;
       slide.elements = slide.elements.filter((e) => e.id !== elementId);
+    }),
+
+  removeElements: (slideId, elementIds) =>
+    mutate(set, get, (deck) => {
+      const slide = findSlide(deck, slideId);
+      if (!slide) return;
+      const drop = new Set(elementIds);
+      slide.elements = slide.elements.filter((e) => !drop.has(e.id));
     }),
 
   reorderElement: (slideId, elementId, op) =>
