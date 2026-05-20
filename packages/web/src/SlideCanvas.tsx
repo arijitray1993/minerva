@@ -253,17 +253,17 @@ export function SlideCanvas({ deck, slide }: Props) {
 
   function onStageMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
     if (panMode) return; // pan drag owns the gesture
-    // Cmd/Ctrl-drag from empty canvas (or stage background) starts a marquee.
+    // Cmd/Ctrl-drag starts a marquee, anywhere — including over an element.
+    // Selection is *not* cleared here; mouseup decides whether this gesture
+    // was a drag (replace selection with marquee result) or a no-drag click
+    // (leave selection alone so the element's own onMouseDown handler — which
+    // already toggled additively — owns the change).
     if (
       (e.evt.metaKey || e.evt.ctrlKey) &&
-      tool === "select" &&
-      (e.target === e.target.getStage() || e.target.getAttr("data-bg"))
+      tool === "select"
     ) {
       const p = localPointer();
-      if (p) {
-        setMarquee({ start: p, current: p });
-        setSelection([]);
-      }
+      if (p) setMarquee({ start: p, current: p });
       return;
     }
     if (tool === "line" || tool === "arrow") {
@@ -401,8 +401,16 @@ export function SlideCanvas({ deck, slide }: Props) {
 
   function onStageMouseUp() {
     if (!marquee) return;
-    const ids = elementsInsideRect(slide.elements, marquee);
-    setSelection(ids);
+    // Treat micro-movements as a click, not a drag: leaves any additive
+    // selection that the element's onMouseDown made untouched. Otherwise
+    // overwrite selection with whatever's inside the dashed rect.
+    const dx = Math.abs(marquee.current.x - marquee.start.x);
+    const dy = Math.abs(marquee.current.y - marquee.start.y);
+    const dragged = dx > 4 || dy > 4;
+    if (dragged) {
+      const ids = elementsInsideRect(slide.elements, marquee);
+      setSelection(ids);
+    }
     setMarquee(null);
   }
 
@@ -875,12 +883,17 @@ function RenderElement({ el, pointerPaused, selected, groupDragActive, onDoubleC
     listening: !pointerPaused,
     onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>) => {
       if (pointerPaused) return;
-      onSelect(e.evt.shiftKey || e.evt.metaKey);
-      if (selected) {
-        // Already selected — element drag should own this gesture.
+      const cmd = e.evt.metaKey || e.evt.ctrlKey;
+      // Toggle additively on shift OR cmd. The toggle stands when the user
+      // *clicks* without dragging; if they drag, the stage-level marquee
+      // overwrites the selection on mouseup.
+      onSelect(e.evt.shiftKey || cmd);
+      if (selected && !cmd) {
+        // Already selected — element drag should own this gesture. But when
+        // cmd is held, always let it bubble so the stage can start a marquee
+        // from on top of an element.
         e.cancelBubble = true;
       }
-      // Else: let the event bubble so the stage's pan-drag can pick it up if the user drags.
     },
     onDblClick: (e: Konva.KonvaEventObject<MouseEvent>) => {
       if (pointerPaused) return;

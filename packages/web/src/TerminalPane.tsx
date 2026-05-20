@@ -111,6 +111,11 @@ export const TerminalPane = forwardRef<TerminalHandle, { visible: boolean }>(
         const ws = wsRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         ws.send(JSON.stringify({ kind: "data", data: text }));
+        // Move keyboard focus to the terminal so the user's next keystroke
+        // (notably Enter) hits the pty, not whichever button just pushed text
+        // in here. Without this, the "Start working" button stays focused
+        // and Enter re-fires its click, re-appending the prompt.
+        try { termRef.current?.focus(); } catch { /* ignore */ }
       },
       fit: () => {
         try { fitRef.current?.fit(); } catch { /* ignore */ }
