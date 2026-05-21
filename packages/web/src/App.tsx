@@ -27,6 +27,32 @@ function cloneElementWithFreshIds(el: ElementT): ElementT {
   return copy;
 }
 
+const PASTE_OFFSET = 24;
+
+/** Paste every element in `clipboard` onto `slideId` with fresh ids and a
+ *  small offset so the copy is visually distinct from its source. Selection
+ *  flips to the new ids. The clipboard itself is shifted forward by the same
+ *  offset so a chain of Cmd+V steps cascades the copies down-right. */
+function pasteFromInAppClipboard(slideId: string, clipboard: ElementT[]) {
+  const st = useStore.getState();
+  const addElement = st.addElement;
+  const newIds: string[] = [];
+  for (const src of clipboard) {
+    const copy = cloneElementWithFreshIds(src);
+    copy.x += PASTE_OFFSET;
+    copy.y += PASTE_OFFSET;
+    addElement(slideId, copy);
+    newIds.push(copy.id);
+  }
+  st.setClipboard(clipboard.map((src) => {
+    const c = JSON.parse(JSON.stringify(src)) as ElementT;
+    c.x += PASTE_OFFSET;
+    c.y += PASTE_OFFSET;
+    return c;
+  }));
+  useStore.getState().setSelection(newIds);
+}
+
 export function App() {
   const deck = useStore((s) => s.deck);
   const currentSlideId = useStore((s) => s.currentSlideId);
@@ -116,6 +142,18 @@ export function App() {
               e.preventDefault();
             }
           }
+        }
+      } else if (meta && (e.key === "v" || e.key === "V") && !inEditor) {
+        // In-app paste: handle it here instead of waiting for the browser's
+        // paste event. The paste event can be eaten or never fire when focus
+        // is on the Konva canvas, which made lines/arrows look like they
+        // weren't pasting at all. System-clipboard paste (images / SVG from
+        // other tabs) is still handled by the onPaste listener below — we
+        // only take over when our own clipboard has content to paste.
+        const st = useStore.getState();
+        if (st.clipboard.length > 0 && currentSlideId) {
+          e.preventDefault();
+          pasteFromInAppClipboard(currentSlideId, st.clipboard);
         }
       }
     };
@@ -241,31 +279,10 @@ export function App() {
         }
       }
 
-      // 3. Fall back to the in-app clipboard: paste deep copies of whatever
-      // the user last Cmd+C'd inside Minerva, with fresh IDs and a small
-      // offset so they're visibly distinct from the originals.
-      const st = useStore.getState();
-      if (st.clipboard.length > 0) {
-        e.preventDefault();
-        const PASTE_OFFSET = 24;
-        const newIds: string[] = [];
-        for (const src of st.clipboard) {
-          const copy = cloneElementWithFreshIds(src);
-          copy.x += PASTE_OFFSET;
-          copy.y += PASTE_OFFSET;
-          addElement(currentSlideId, copy);
-          newIds.push(copy.id);
-        }
-        // Re-stash the pasted clones so a chain of Cmd+V steps each new copy
-        // further from the previous one (Figma/Slides behavior).
-        st.setClipboard(st.clipboard.map((src) => {
-          const c = JSON.parse(JSON.stringify(src)) as ElementT;
-          c.x += PASTE_OFFSET;
-          c.y += PASTE_OFFSET;
-          return c;
-        }));
-        useStore.getState().setSelection(newIds);
-      }
+      // Note: in-app element paste is handled in the keydown listener
+      // (Cmd+V) above, not here — paste events can be eaten when focus is
+      // on the Konva canvas. This handler only deals with real system-
+      // clipboard payloads (images, SVG).
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);

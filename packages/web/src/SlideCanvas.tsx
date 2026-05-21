@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Stage, Layer, Rect, Ellipse, Line, Arrow, Text, Image as KImage, Transformer, Group } from "react-konva";
+import { Stage, Layer, Rect, Ellipse, Line, Arrow, Text, Image as KImage, Transformer, Group, Circle } from "react-konva";
 import useImage from "use-image";
 import type Konva from "konva";
 import type {
@@ -156,6 +156,11 @@ export function SlideCanvas({ deck, slide }: Props) {
   }, [containerSize.w, containerSize.h, fitScale, offset.x, offset.y, userScale]);
 
   // Wheel zoom (only with modifier so plain scroll doesn't fight selection).
+  // Map deltaY → zoom factor exponentially. With a small intensity, trackpad
+  // pinch-zoom (deltaY ≈ 1–10 per event, many events per gesture) feels
+  // smooth, and a single mouse-wheel notch (deltaY ≈ 100) still gives a
+  // perceptible step without overshooting. Cap |deltaY| so an aggressive
+  // flick doesn't rocket the zoom.
   const onWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
     if (!(e.evt.metaKey || e.evt.ctrlKey)) return;
     e.evt.preventDefault();
@@ -163,7 +168,9 @@ export function SlideCanvas({ deck, slide }: Props) {
     if (!stage) return;
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
-    zoomBy(e.evt.deltaY > 0 ? 1 / 1.1 : 1.1, pointer);
+    const dy = Math.max(-100, Math.min(100, e.evt.deltaY));
+    const factor = Math.exp(-dy * 0.0035);
+    zoomBy(factor, pointer);
   };
 
   // When a web font finishes loading, force Konva to re-measure & redraw all
@@ -235,17 +242,27 @@ export function SlideCanvas({ deck, slide }: Props) {
     }
   }, [slide.elements]);
 
-  // Wire the transformer to the currently selected nodes.
+  // Wire the transformer to the currently selected nodes. Line-like shapes
+  // (line / arrow / curveQuad) are excluded when they're the *only* selected
+  // element — for those we render endpoint handles instead, which let the
+  // user edit each end independently rather than scaling a bounding box.
+  const loneLineLike = (() => {
+    if (selectedIds.length !== 1) return null;
+    const el = slide.elements.find((e) => e.id === selectedIds[0]);
+    if (!el || el.type !== "shape") return null;
+    if (!["line", "arrow", "curveQuad"].includes(el.shapeKind)) return null;
+    return el as ShapeElementT;
+  })();
   useEffect(() => {
     const tr = transformerRef.current;
     const stage = stageRef.current;
     if (!tr || !stage) return;
-    const nodes = selectedIds
-      .map((id) => stage.findOne(`#${id}`))
-      .filter(Boolean) as Konva.Node[];
+    const nodes = loneLineLike
+      ? []
+      : (selectedIds.map((id) => stage.findOne(`#${id}`)).filter(Boolean) as Konva.Node[]);
     tr.nodes(nodes);
     tr.getLayer()?.batchDraw();
-  }, [selectedIds, slide.elements]);
+  }, [selectedIds, slide.elements, loneLineLike]);
 
   function localPointer() {
     const stage = stageRef.current;
@@ -689,6 +706,14 @@ export function SlideCanvas({ deck, slide }: Props) {
               />
             );
           })}
+          {loneLineLike && (
+            <LineEditHandles
+              el={loneLineLike}
+              slideId={slide.id}
+              scale={scale}
+              stageRef={stageRef}
+            />
+          )}
           <Transformer
             ref={transformerRef}
             rotateEnabled
@@ -1251,6 +1276,120 @@ function ShapeEl({ el, common }: { el: ShapeElementT; common: any }) {
       tension={0}
       {...shadow}
     />
+  );
+}
+
+/**
+ * Endpoint-based edit handles for line/arrow/curveQuad shapes. We render two
+ * (or three, for curves) draggable circles at the element's anchor points and
+ * use Konva-imperative mutation during the drag so the line follows the handle
+ * live; commit to the store happens on dragEnd as a single history entry. The
+ * standard Transformer is suppressed for these elements by the caller so the
+ * user never sees a bbox-resize UI for what is conceptually two endpoints.
+ */
+function LineEditHandles({
+  el,
+  slideId,
+  scale,
+  stageRef,
+}: {
+  el: ShapeElementT;
+  slideId: string;
+  scale: number;
+  stageRef: React.RefObject<Konva.Stage>;
+}) {
+  const updateElement = useStore((s) => s.updateElement);
+  const isCurve = el.shapeKind === "curveQuad";
+  const startX = el.x;
+  const startY = el.y;
+  const endX = el.x + el.w;
+  const endY = el.y + el.h;
+  const cx = el.x + (el.style?.controlX ?? el.w / 2);
+  const cy = el.y + (el.style?.controlY ?? el.h / 2);
+
+  // Look up the Konva node for the line so we can imperatively update its
+  // x/y/points during the drag. Without this the user would only see the
+  // handle move, not the line — and the line would snap into place on release.
+  function getLineNode(): Konva.Node | null {
+    return stageRef.current?.findOne(`#${el.id}`) ?? null;
+  }
+
+  // Live-update the line shape as a handle moves. `kind` says which endpoint
+  // is being dragged; we compute the new (x, y, points) and write them onto
+  // the Konva node directly.
+  function liveUpdate(kind: "start" | "end" | "control", px: number, py: number) {
+    const node = getLineNode();
+    if (!node) return;
+    let nx = el.x, ny = el.y, nw = el.w, nh = el.h;
+    let ncx = el.style?.controlX ?? el.w / 2;
+    let ncy = el.style?.controlY ?? el.h / 2;
+    if (kind === "start") {
+      nx = px;
+      ny = py;
+      nw = endX - px;
+      nh = endY - py;
+    } else if (kind === "end") {
+      nw = px - el.x;
+      nh = py - el.y;
+    } else {
+      ncx = px - el.x;
+      ncy = py - el.y;
+    }
+    node.x(nx);
+    node.y(ny);
+    if (isCurve) (node as any).points([0, 0, ncx, ncy, nw, nh]);
+    else (node as any).points([0, 0, nw, nh]);
+    node.getLayer()?.batchDraw();
+  }
+
+  // Commit a finalized drag to the store. Single mutate → single undo step.
+  function commit(kind: "start" | "end" | "control", px: number, py: number) {
+    if (kind === "start") {
+      updateElement(slideId, el.id, {
+        x: px, y: py,
+        w: endX - px,
+        h: endY - py,
+      } as Partial<ShapeElementT>);
+    } else if (kind === "end") {
+      updateElement(slideId, el.id, {
+        w: px - el.x,
+        h: py - el.y,
+      } as Partial<ShapeElementT>);
+    } else {
+      updateElement(slideId, el.id, {
+        style: { ...(el.style ?? {}), controlX: px - el.x, controlY: py - el.y },
+      } as Partial<ShapeElementT>);
+    }
+  }
+
+  const handleRadius = Math.max(6, 8 / scale);
+  const handleStroke = Math.max(1, 1.5 / scale);
+
+  const Handle = ({
+    x, y, kind, isControl,
+  }: { x: number; y: number; kind: "start" | "end" | "control"; isControl?: boolean }) => (
+    <Circle
+      x={x}
+      y={y}
+      radius={handleRadius}
+      fill={isControl ? "#fff" : "#4a90e2"}
+      stroke={isControl ? "#4a90e2" : "#fff"}
+      strokeWidth={handleStroke}
+      draggable
+      onMouseEnter={(e) => { const stage = e.target.getStage(); if (stage) stage.container().style.cursor = "move"; }}
+      onMouseLeave={(e) => { const stage = e.target.getStage(); if (stage) stage.container().style.cursor = ""; }}
+      onDragStart={(e) => { e.cancelBubble = true; }}
+      onDragMove={(e) => { e.cancelBubble = true; liveUpdate(kind, e.target.x(), e.target.y()); }}
+      onDragEnd={(e) => { e.cancelBubble = true; commit(kind, e.target.x(), e.target.y()); }}
+    />
+  );
+
+  return (
+    <>
+      <Handle x={startX} y={startY} kind="start" />
+      <Handle x={endX} y={endY} kind="end" />
+      {isCurve && <Handle x={cx} y={cy} kind="control" isControl />}
+    </>
   );
 }
 
