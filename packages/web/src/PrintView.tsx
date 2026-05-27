@@ -215,6 +215,18 @@ function PrintEl({ el }: { el: ElementT }) {
   if (el.type === "table") {
     return <TableEl el={el} common={common} />;
   }
+  if (el.type === "group") {
+    // Children's x/y are stored relative to the group origin (set when
+    // groupSelected wraps them); the Konva Group's transform composes those
+    // back to slide space. Without this branch the whole group rendered as
+    // null, which is why PDFs were dropping entire bands of elements (most
+    // visibly the bottom tiles, since several groups happen to live there).
+    return (
+      <Group x={el.x} y={el.y} rotation={el.rotation ?? 0} width={el.w} height={el.h}>
+        {el.children.map((c) => <PrintEl key={c.id} el={c} />)}
+      </Group>
+    );
+  }
   return null;
 }
 
